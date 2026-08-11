@@ -1,0 +1,14 @@
+{
+  "name": "Anny Extensions",
+  "plugins": [
+    {
+      "id": "weebcentral",
+      "name": "Weeb Central",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": false,
+      "icon": "https://weebcentral.com/static/images/brand.png",
+      "entry": "weebcentral.plugin.js"
+    }
+  ]
+}
