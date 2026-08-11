@@ -178,13 +178,7 @@ const plugin = {
       })
       .filter((c) => c.id);
 
-    if (chaptersList.length > 1) {
-      const firstNum = parseFloat(chaptersList[0].chapter || 0);
-      const lastNum = parseFloat(chaptersList[chaptersList.length - 1].chapter || 0);
-      if (firstNum < lastNum) {
-        chaptersList.reverse();
-      }
-    }
+    chaptersList.sort((a, b) => parseFloat(a.chapter || 0) - parseFloat(b.chapter || 0));
 
     return chaptersList;
   },
@@ -242,9 +236,7 @@ const plugin = {
 
         if (tags.length > 0) return tags;
       }
-    } catch (e) {
-      // Fallback to static array if network fails
-    }
+    } catch (e) {}
 
     return fallbackGenres.map((genre) => ({
       id: genre,
