@@ -13,21 +13,78 @@ async function getDoc(path) {
   return harbor.parseHtml(res.body);
 }
 
-function parseSeriesCard(el) {
-  const link = el.querySelector('a[href*="/series/"]');
-  if (!link) return null;
+// Strictly extracts only the WeebCentral ULID string (e.g., 01J76XY7E9FNDZ1DBBM6PBJPFK)
+function extractSeriesId(href) {
+  if (!href) return "";
+  const match = href.match(/\/series\/([A-Z0-9]+)/i);
+  return match ? match[1] : "";
+}
 
-  const href = link.attr("href") || "";
-  const id = href.replace(/^\/series\//, "");
-  const img = el.querySelector("img");
-  const rawAlt = img?.attr("alt") || "";
-  const title = rawAlt.replace(/\s*cover$/i, "").trim() || el.querySelector(".truncate")?.text()?.trim() || id;
+function parseSeriesList(doc) {
+  const seen = new Set();
+  const list = [];
 
-  return {
-    id,
-    title,
-    cover: abs(img?.attr("src")),
-  };
+  const articles = doc.querySelectorAll("article");
+  for (const article of articles) {
+    const link = article.querySelector('a[href*="/series/"]');
+    if (!link) continue;
+
+    const href = link.attr("href") || "";
+    const id = extractSeriesId(href);
+    if (!id || seen.has(id)) continue;
+
+    const img = article.querySelector("img");
+    const rawAlt = img?.attr("alt") || "";
+    const title = (
+      rawAlt.replace(/\s*cover$/i, "").trim() ||
+      article.querySelector(".truncate")?.text()?.trim() ||
+      article.querySelector(".font-semibold")?.text()?.trim() ||
+      link.text()?.trim() ||
+      id
+    );
+
+    let coverUrl = img?.attr("src") || img?.attr("data-src");
+    if (!coverUrl || coverUrl.includes("/static/")) {
+      const source = article.querySelector("source");
+      if (source) {
+        coverUrl = source.attr("srcset")?.split(" ")[0];
+      }
+    }
+
+    seen.add(id);
+    list.push({
+      id,
+      title,
+      cover: abs(coverUrl),
+    });
+  }
+
+  // Fallback if no article cards match
+  if (list.length === 0) {
+    const links = doc.querySelectorAll('a[href*="/series/"]');
+    for (const a of links) {
+      const href = a.attr("href") || "";
+      const id = extractSeriesId(href);
+      if (!id || seen.has(id)) continue;
+
+      const img = a.querySelector("img");
+      const title = (
+        img?.attr("alt")?.replace(/\s*cover$/i, "")?.trim() ||
+        a.text()?.trim() ||
+        id
+      );
+      const coverUrl = img?.attr("src") || img?.attr("data-src");
+
+      seen.add(id);
+      list.push({
+        id,
+        title,
+        cover: abs(coverUrl),
+      });
+    }
+  }
+
+  return list;
 }
 
 const plugin = {
@@ -35,81 +92,110 @@ const plugin = {
   name: "Weeb Central",
 
   async popular(offset, tagId) {
-    const page = Math.floor(offset / 32) + 1;
     const tagQuery = tagId ? "&tag=" + encodeURIComponent(tagId) : "";
-    const doc = await getDoc(`/search/data?sort=Popularity&order=Descending&display_mode=Full+Display&page=${page}${tagQuery}`);
-
-    return doc.querySelectorAll("article").map(parseSeriesCard).filter(Boolean);
+    const url = `/search/data?limit=32&offset=${offset}&sort=Popularity&order=Descending&display_mode=Full+Display${tagQuery}`;
+    const doc = await getDoc(url);
+    return parseSeriesList(doc);
   },
 
   async search(query, offset, tagId) {
-    const page = Math.floor(offset / 32) + 1;
     const tagQuery = tagId ? "&tag=" + encodeURIComponent(tagId) : "";
-    const doc = await getDoc(`/search/data?text=${encodeURIComponent(query)}&sort=Popularity&order=Descending&display_mode=Full+Display&page=${page}${tagQuery}`);
-
-    return doc.querySelectorAll("article").map(parseSeriesCard).filter(Boolean);
+    const url = `/search/data?limit=32&offset=${offset}&text=${encodeURIComponent(query)}&sort=Best+Match&order=Ascending&display_mode=Full+Display${tagQuery}`;
+    const doc = await getDoc(url);
+    return parseSeriesList(doc);
   },
 
   async detail(id) {
-    const doc = await getDoc("/series/" + id);
-    const title = doc.querySelector("h1")?.text()?.trim() || id;
-    const cover = abs(doc.querySelector("picture img")?.attr("src"));
-    const description = doc.querySelector(".description, #synopsis, article p")?.text()?.trim();
+    const cleanId = extractSeriesId(id) || id;
+    const doc = await getDoc("/series/" + cleanId);
+
+    const title = doc.querySelector("h1")?.text()?.trim() || cleanId;
+    const imgEl = doc.querySelector("picture img") || doc.querySelector("img[alt*='cover']");
+    const cover = abs(imgEl?.attr("src") || imgEl?.attr("data-src"));
+    const description = doc.querySelector(".description, #synopsis, article p, ul li p")?.text()?.trim();
+
     const isOngoing = Boolean(doc.querySelector("img[src*='icon-ongoing']"));
+    const isCompleted = Boolean(doc.querySelector("img[src*='icon-completed']"));
+    let status = "Unknown";
+    if (isOngoing) status = "Ongoing";
+    if (isCompleted) status = "Completed";
+
     const author = doc.querySelector("a[href*='author']")?.text()?.trim();
 
     return {
-      id,
+      id: cleanId,
       title,
       cover,
       description,
-      status: isOngoing ? "Ongoing" : "Completed",
+      status,
       author,
     };
   },
 
   async chapters(id) {
+    const cleanId = extractSeriesId(id) || id;
     let doc;
     try {
-      doc = await getDoc("/series/" + id + "/full-chapter-list");
+      doc = await getDoc("/series/" + cleanId + "/full-chapter-list");
     } catch (e) {
-      doc = await getDoc("/series/" + id);
+      doc = await getDoc("/series/" + cleanId);
     }
 
-    return doc.querySelectorAll('a[href*="/chapters/"]').map((a) => {
-      const href = a.attr("href") || "";
-      const nameText = a.text()?.trim() || "";
-      const match = nameText.match(/(?:Chapter|Episode)\s*([\d.]+)/i);
+    return doc
+      .querySelectorAll('a[href*="/chapters/"]')
+      .map((a) => {
+        const href = a.attr("href") || "";
+        const matchId = href.match(/\/chapters\/([A-Z0-9]+)/i);
+        const chapterId = matchId ? matchId[1] : href.replace(/^\/chapters\//, "");
 
-      return {
-        id: href.replace(/^\/chapters\//, ""),
-        chapter: match ? match[1] : null,
-        title: nameText,
-        language: "en",
-        publishAt: a.querySelector("time")?.attr("datetime") || undefined,
-      };
-    }).filter((c) => c.id);
+        const nameText = a.text()?.trim() || "";
+        const numMatch = nameText.match(/(?:Chapter|Episode)\s*([\d.]+)/i);
+
+        return {
+          id: chapterId,
+          chapter: numMatch ? numMatch[1] : null,
+          title: nameText,
+          language: "en",
+          publishAt: a.querySelector("time")?.attr("datetime") || undefined,
+        };
+      })
+      .filter((c) => c.id);
   },
 
   async pageUrls(chapterId) {
+    const cleanChapterId = chapterId.match(/([A-Z0-9]+)$/i)?.[1] || chapterId;
     let doc;
     try {
-      doc = await getDoc("/chapters/" + chapterId + "/images?reading_style=long_strip");
+      doc = await getDoc("/chapters/" + cleanChapterId + "/images?reading_style=long_strip");
     } catch (e) {
-      doc = await getDoc("/chapters/" + chapterId);
+      doc = await getDoc("/chapters/" + cleanChapterId);
     }
 
-    return doc.querySelectorAll("img")
+    return doc
+      .querySelectorAll("img")
       .map((img) => abs(img.attr("data-src") || img.attr("src")))
-      .filter((src) => src && !src.includes("/static/images/") && !src.includes("brand"));
+      .filter((src) => src && !src.includes("/static/images/") && !src.includes("brand") && !src.includes("icon-"));
   },
 
   async tags() {
     const doc = await getDoc("/search");
-    return doc.querySelectorAll('a[href*="tag="]').map((a) => ({
-      id: (a.attr("href") || "").split("tag=")[1] || "",
-      name: a.text().trim(),
-      group: "Genre",
-    })).filter((t) => t.id && t.name);
+    const tags = [];
+    const seen = new Set();
+
+    const tagLinks = doc.querySelectorAll('a[href*="tag="]');
+    for (const a of tagLinks) {
+      const href = a.attr("href") || "";
+      const tagVal = href.split("tag=")[1]?.split("&")[0];
+      if (tagVal && !seen.has(tagVal)) {
+        seen.add(tagVal);
+        tags.push({
+          id: decodeURIComponent(tagVal),
+          name: a.text().trim(),
+          group: "Genre",
+        });
+      }
+    }
+
+    return tags;
   },
 };
