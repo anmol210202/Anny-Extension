@@ -90,14 +90,14 @@ const plugin = {
   name: "Weeb Central",
 
   async popular(offset, tagId) {
-    const tagQuery = tagId ? "&tag=" + encodeURIComponent(tagId) : "";
+    const tagQuery = tagId ? `&included_tag=${encodeURIComponent(tagId)}&tag=${encodeURIComponent(tagId)}` : "";
     const url = `/search/data?limit=32&offset=${offset}&sort=Popularity&order=Descending&display_mode=Full+Display${tagQuery}`;
     const doc = await getDoc(url);
     return parseSeriesList(doc);
   },
 
   async search(query, offset, tagId) {
-    const tagQuery = tagId ? "&tag=" + encodeURIComponent(tagId) : "";
+    const tagQuery = tagId ? `&included_tag=${encodeURIComponent(tagId)}&tag=${encodeURIComponent(tagId)}` : "";
     const url = `/search/data?limit=32&offset=${offset}&text=${encodeURIComponent(query)}&sort=Best+Match&order=Ascending&display_mode=Full+Display${tagQuery}`;
     const doc = await getDoc(url);
     return parseSeriesList(doc);
@@ -146,10 +146,8 @@ const plugin = {
         const matchId = href.match(/\/chapters\/([A-Z0-9]+)/i);
         const chapterId = matchId ? matchId[1] : href.replace(/^\/chapters\//, "");
 
-        // Isolate clean title text and strip out 'Last Read' metadata
         let rawText = a.querySelector("span")?.text() || a.text() || "";
         const cleanTitle = rawText.split(/Last Read/i)[0].trim();
-
         const numMatch = cleanTitle.match(/(?:Chapter|Episode|Beat)\s*([\d.]+)/i) || cleanTitle.match(/([\d.]+)/);
 
         return {
@@ -162,11 +160,11 @@ const plugin = {
       })
       .filter((c) => c.id);
 
-    // Harbor requires chapters in NEWEST FIRST order (descending)
+    // Harbor expects oldest chapter first (Ch 1 -> Ch 176) for "Start from beginning" to work
     if (chaptersList.length > 1) {
       const firstNum = parseFloat(chaptersList[0].chapter || 0);
       const lastNum = parseFloat(chaptersList[chaptersList.length - 1].chapter || 0);
-      if (firstNum < lastNum) {
+      if (firstNum > lastNum) {
         chaptersList.reverse();
       }
     }
@@ -194,15 +192,26 @@ const plugin = {
     const tags = [];
     const seen = new Set();
 
-    const tagLinks = doc.querySelectorAll('a[href*="tag="]');
-    for (const a of tagLinks) {
-      const href = a.attr("href") || "";
-      const tagVal = href.split("tag=")[1]?.split("&")[0];
+    // Parse tag checkboxes and links on the search page
+    const elements = doc.querySelectorAll('input[name="included_tag"], input[name="tag"], a[href*="tag="]');
+    for (const el of elements) {
+      let tagVal = el.attr("value");
+      let tagName = "";
+
+      if (!tagVal && el.attr("href")) {
+        const href = el.attr("href");
+        tagVal = href.split("tag=")[1]?.split("&")[0];
+        tagName = el.text()?.trim();
+      } else {
+        const parent = el.parent();
+        tagName = parent?.text()?.trim() || tagVal;
+      }
+
       if (tagVal && !seen.has(tagVal)) {
         seen.add(tagVal);
         tags.push({
           id: decodeURIComponent(tagVal),
-          name: a.text().trim(),
+          name: tagName || decodeURIComponent(tagVal),
           group: "Genre",
         });
       }
