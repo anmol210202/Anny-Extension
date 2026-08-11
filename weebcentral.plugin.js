@@ -1,5 +1,10 @@
 const BASE = "https://weebcentral.com";
 
+const HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+};
+
 function abs(url) {
   if (!url) return undefined;
   if (/^https?:\/\//i.test(url)) return url;
@@ -8,7 +13,10 @@ function abs(url) {
 }
 
 async function getDoc(path) {
-  const res = await harbor.http(BASE + path, { responseType: "text" });
+  const res = await harbor.http(BASE + path, {
+    headers: HEADERS,
+    responseType: "text",
+  });
   if (!res.ok) throw new Error("HTTP " + res.status + " for " + path);
   return harbor.parseHtml(res.body);
 }
@@ -146,14 +154,24 @@ const plugin = {
         const matchId = href.match(/\/chapters\/([A-Z0-9]+)/i);
         const chapterId = matchId ? matchId[1] : href.replace(/^\/chapters\//, "");
 
-        let rawText = a.querySelector("span")?.text() || a.text() || "";
+        const spans = a.querySelectorAll("span");
+        let rawText = "";
+        if (spans && spans.length > 0) {
+          rawText = spans.map((s) => s.text()).join(" ");
+        }
+        if (!rawText.trim()) {
+          rawText = a.text() || "";
+        }
+
         const cleanTitle = rawText.split(/Last Read/i)[0].trim();
-        const numMatch = cleanTitle.match(/(?:Chapter|Episode|Beat)\s*([\d.]+)/i) || cleanTitle.match(/([\d.]+)/);
+        const numMatch =
+          cleanTitle.match(/(?:Chapter|Episode|Beat|Vol\.\d+|Ch\.)\s*([\d.]+)/i) ||
+          cleanTitle.match(/([\d.]+)/);
 
         return {
           id: chapterId,
           chapter: numMatch ? numMatch[1] : null,
-          title: cleanTitle,
+          title: cleanTitle || `Chapter ${numMatch ? numMatch[1] : ""}`,
           language: "en",
           publishAt: a.querySelector("time")?.attr("datetime") || undefined,
         };
@@ -163,7 +181,7 @@ const plugin = {
     if (chaptersList.length > 1) {
       const firstNum = parseFloat(chaptersList[0].chapter || 0);
       const lastNum = parseFloat(chaptersList[chaptersList.length - 1].chapter || 0);
-      if (firstNum > lastNum) {
+      if (firstNum < lastNum) {
         chaptersList.reverse();
       }
     }
@@ -183,29 +201,51 @@ const plugin = {
     return doc
       .querySelectorAll("img")
       .map((img) => abs(img.attr("data-src") || img.attr("src")))
-      .filter((src) => src && !src.includes("/static/images/") && !src.includes("brand") && !src.includes("icon-"));
+      .filter(
+        (src) =>
+          src &&
+          !src.includes("/static/images/") &&
+          !src.includes("brand") &&
+          !src.includes("icon-")
+      );
   },
 
   async tags() {
-    const doc = await getDoc("/search");
+    let doc;
+    try {
+      doc = await getDoc("/search");
+    } catch (e) {
+      return [];
+    }
+
     const tags = [];
     const seen = new Set();
 
-    const labels = doc.querySelectorAll("label");
-    for (const label of labels) {
-      const input = label.querySelector('input[name="included_tag"]') || label.querySelector('input[name="tag"]');
-      if (!input) continue;
+    const inputs = doc.querySelectorAll('input[id^="tag-"][id$="-value"]');
+    for (const input of inputs) {
+      const val = input.attr("value")?.trim();
+      if (val && !seen.has(val)) {
+        seen.add(val);
+        tags.push({ id: val, name: val, group: "Genre" });
+      }
+    }
 
-      const tagVal = input.attr("value");
-      const tagName = label.text()?.trim();
-
-      if (tagVal && !seen.has(tagVal)) {
-        seen.add(tagVal);
-        tags.push({
-          id: tagVal,
-          name: tagName || tagVal,
-          group: "Genre",
-        });
+    if (tags.length === 0) {
+      const res = await harbor.http(BASE + "/search", {
+        headers: HEADERS,
+        responseType: "text",
+      });
+      if (res.ok) {
+        const html = res.body || "";
+        const regex = /id=["']tag-([^"']+)-value["'][^>]*value=["']([^"']+)["']/gi;
+        let match;
+        while ((match = regex.exec(html)) !== null) {
+          const val = match[2].trim();
+          if (val && !seen.has(val)) {
+            seen.add(val);
+            tags.push({ id: val, name: val, group: "Genre" });
+          }
+        }
       }
     }
 

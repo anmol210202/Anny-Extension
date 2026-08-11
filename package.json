@@ -1,0 +1,25 @@
+{
+  "name": "anny-extensions",
+  "version": "1.0.0",
+  "description": "",
+  "main": "weebcentral.plugin.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anmol210202/Anny-Extension.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/anmol210202/Anny-Extension/issues"
+  },
+  "homepage": "https://github.com/anmol210202/Anny-Extension#readme",
+  "dependencies": {
+    "jsdom": "^29.1.1",
+    "node-fetch": "^2.7.0"
+  }
+}
