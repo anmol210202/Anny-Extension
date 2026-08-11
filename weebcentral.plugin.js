@@ -90,14 +90,14 @@ const plugin = {
   name: "Weeb Central",
 
   async popular(offset, tagId) {
-    const tagQuery = tagId ? `&included_tag=${encodeURIComponent(tagId)}&tag=${encodeURIComponent(tagId)}` : "";
+    const tagQuery = tagId ? `&included_tag=${encodeURIComponent(tagId)}` : "";
     const url = `/search/data?limit=32&offset=${offset}&sort=Popularity&order=Descending&display_mode=Full+Display${tagQuery}`;
     const doc = await getDoc(url);
     return parseSeriesList(doc);
   },
 
   async search(query, offset, tagId) {
-    const tagQuery = tagId ? `&included_tag=${encodeURIComponent(tagId)}&tag=${encodeURIComponent(tagId)}` : "";
+    const tagQuery = tagId ? `&included_tag=${encodeURIComponent(tagId)}` : "";
     const url = `/search/data?limit=32&offset=${offset}&text=${encodeURIComponent(query)}&sort=Best+Match&order=Ascending&display_mode=Full+Display${tagQuery}`;
     const doc = await getDoc(url);
     return parseSeriesList(doc);
@@ -160,7 +160,6 @@ const plugin = {
       })
       .filter((c) => c.id);
 
-    // Harbor expects oldest chapter first (Ch 1 -> Ch 176) for "Start from beginning" to work
     if (chaptersList.length > 1) {
       const firstNum = parseFloat(chaptersList[0].chapter || 0);
       const lastNum = parseFloat(chaptersList[chaptersList.length - 1].chapter || 0);
@@ -192,26 +191,19 @@ const plugin = {
     const tags = [];
     const seen = new Set();
 
-    // Parse tag checkboxes and links on the search page
-    const elements = doc.querySelectorAll('input[name="included_tag"], input[name="tag"], a[href*="tag="]');
-    for (const el of elements) {
-      let tagVal = el.attr("value");
-      let tagName = "";
+    const labels = doc.querySelectorAll("label");
+    for (const label of labels) {
+      const input = label.querySelector('input[name="included_tag"]') || label.querySelector('input[name="tag"]');
+      if (!input) continue;
 
-      if (!tagVal && el.attr("href")) {
-        const href = el.attr("href");
-        tagVal = href.split("tag=")[1]?.split("&")[0];
-        tagName = el.text()?.trim();
-      } else {
-        const parent = el.parent();
-        tagName = parent?.text()?.trim() || tagVal;
-      }
+      const tagVal = input.attr("value");
+      const tagName = label.text()?.trim();
 
       if (tagVal && !seen.has(tagVal)) {
         seen.add(tagVal);
         tags.push({
-          id: decodeURIComponent(tagVal),
-          name: tagName || decodeURIComponent(tagVal),
+          id: tagVal,
+          name: tagName || tagVal,
           group: "Genre",
         });
       }
