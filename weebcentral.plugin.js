@@ -211,32 +211,25 @@ const plugin = {
   },
 
   async tags() {
-    let doc;
+    const fallbackGenres = [
+      "Action", "Adult", "Adventure", "Comedy", "Doujinshi", "Drama", "Ecchi", 
+      "Fantasy", "Gender Bender", "Harem", "Hentai", "Historical", "Horror", 
+      "Isekai", "Josei", "Lolicon", "Martial Arts", "Mature", "Mecha", "Mystery", 
+      "Psychological", "Romance", "School Life", "Sci-fi", "Seinen", "Shotacon", 
+      "Shoujo", "Shoujo Ai", "Shounen", "Shounen Ai", "Slice of Life", "Smut", 
+      "Sports", "Supernatural", "Tragedy", "Yaoi", "Yuri", "Other"
+    ];
+
     try {
-      doc = await getDoc("/search");
-    } catch (e) {
-      return [];
-    }
-
-    const tags = [];
-    const seen = new Set();
-
-    const inputs = doc.querySelectorAll('input[id^="tag-"][id$="-value"]');
-    for (const input of inputs) {
-      const val = input.attr("value")?.trim();
-      if (val && !seen.has(val)) {
-        seen.add(val);
-        tags.push({ id: val, name: val, group: "Genre" });
-      }
-    }
-
-    if (tags.length === 0) {
       const res = await harbor.http(BASE + "/search", {
         headers: HEADERS,
         responseType: "text",
       });
       if (res.ok) {
         const html = res.body || "";
+        const tags = [];
+        const seen = new Set();
+
         const regex = /id=["']tag-([^"']+)-value["'][^>]*value=["']([^"']+)["']/gi;
         let match;
         while ((match = regex.exec(html)) !== null) {
@@ -246,9 +239,17 @@ const plugin = {
             tags.push({ id: val, name: val, group: "Genre" });
           }
         }
+
+        if (tags.length > 0) return tags;
       }
+    } catch (e) {
+      // Fallback to static array if network fails
     }
 
-    return tags;
+    return fallbackGenres.map((genre) => ({
+      id: genre,
+      name: genre,
+      group: "Genre",
+    }));
   },
 };
