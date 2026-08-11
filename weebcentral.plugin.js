@@ -13,7 +13,6 @@ async function getDoc(path) {
   return harbor.parseHtml(res.body);
 }
 
-// Strictly extracts only the WeebCentral ULID string (e.g., 01J76XY7E9FNDZ1DBBM6PBJPFK)
 function extractSeriesId(href) {
   if (!href) return "";
   const match = href.match(/\/series\/([A-Z0-9]+)/i);
@@ -59,7 +58,6 @@ function parseSeriesList(doc) {
     });
   }
 
-  // Fallback if no article cards match
   if (list.length === 0) {
     const links = doc.querySelectorAll('a[href*="/series/"]');
     for (const a of links) {
@@ -141,25 +139,39 @@ const plugin = {
       doc = await getDoc("/series/" + cleanId);
     }
 
-    return doc
+    const chaptersList = doc
       .querySelectorAll('a[href*="/chapters/"]')
       .map((a) => {
         const href = a.attr("href") || "";
         const matchId = href.match(/\/chapters\/([A-Z0-9]+)/i);
         const chapterId = matchId ? matchId[1] : href.replace(/^\/chapters\//, "");
 
-        const nameText = a.text()?.trim() || "";
-        const numMatch = nameText.match(/(?:Chapter|Episode)\s*([\d.]+)/i);
+        // Isolate clean title text and strip out 'Last Read' metadata
+        let rawText = a.querySelector("span")?.text() || a.text() || "";
+        const cleanTitle = rawText.split(/Last Read/i)[0].trim();
+
+        const numMatch = cleanTitle.match(/(?:Chapter|Episode|Beat)\s*([\d.]+)/i) || cleanTitle.match(/([\d.]+)/);
 
         return {
           id: chapterId,
           chapter: numMatch ? numMatch[1] : null,
-          title: nameText,
+          title: cleanTitle,
           language: "en",
           publishAt: a.querySelector("time")?.attr("datetime") || undefined,
         };
       })
       .filter((c) => c.id);
+
+    // Harbor requires chapters in NEWEST FIRST order (descending)
+    if (chaptersList.length > 1) {
+      const firstNum = parseFloat(chaptersList[0].chapter || 0);
+      const lastNum = parseFloat(chaptersList[chaptersList.length - 1].chapter || 0);
+      if (firstNum < lastNum) {
+        chaptersList.reverse();
+      }
+    }
+
+    return chaptersList;
   },
 
   async pageUrls(chapterId) {
