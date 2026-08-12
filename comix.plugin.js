@@ -5,7 +5,7 @@ const BASE = "https://comix.to";
 async function getDoc(path) {
   const res = await harbor.http(BASE + path, { responseType: "text" });
   if (!res.ok) throw new Error("HTTP " + res.status + " for " + path);
-  return harbor.parseHtml(res.body);
+  return { doc: harbor.parseHtml(res.body), raw: res.body };
 }
 
 function abs(url) {
@@ -17,22 +17,38 @@ function abs(url) {
   return BASE + "/" + url;
 }
 
+// Extraction from embedded JSON hydration data
+function extractJsonData(rawHtml) {
+  try {
+    const match = rawHtml.match(/<script[^>]*id="initial-data"[^>]*>([\s\S]*?)<\/script>/i);
+    if (!match) return null;
+    return JSON.parse(match[1]);
+  } catch (e) {
+    return null;
+  }
+}
+
+function itemToSummary(item) {
+  if (!item || !item.hid) return null;
+  const slug = item.url ? item.url.replace(/^\/title\//, "") : `${item.hid}-${(item.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  
+  return {
+    id: slug.replace(/\/$/, ""),
+    title: item.title || "",
+    cover: abs(item.poster?.medium || item.poster?.large),
+  };
+}
+
 function cardToSummary(el) {
-  const link = el.querySelector("a.lrow__title-link") || 
-               el.querySelector("a.lrow__poster") || 
-               el.querySelector("a.card") || 
-               el.querySelector("a");
+  const link = el.querySelector("a.lrow__title-link") || el.querySelector("a.card") || el.querySelector("a");
   if (!link) return null;
 
   const href = link.attr("href") || "";
   if (!href.includes("/title/")) return null;
 
   const img = el.querySelector("img");
-  const titleEl = el.querySelector(".lrow__title") || 
-                  el.querySelector(".card__title") || 
-                  el.querySelector("h3");
-
-  const rawSrc = img?.attr("src") || img?.attr("data-src") || img?.attr("srcset")?.split(" ")[0];
+  const titleEl = el.querySelector(".lrow__title") || el.querySelector(".card__title") || el.querySelector("h3");
+  const rawSrc = img?.attr("src") || img?.attr("data-src");
 
   return {
     id: href.replace(/^\/title\//, "").replace(/\/$/, ""),
@@ -48,8 +64,15 @@ const plugin = {
   async popular(offset, tagId) {
     const page = Math.floor(offset / 28) + 1;
     const genreParam = tagId ? "&genres_in=" + encodeURIComponent(tagId) : "";
-    const doc = await getDoc("/browse?sort=views_7d%3Adesc&page=" + page + genreParam);
+    const { doc, raw } = await getDoc("/browse?sort=views_7d%3Adesc&page=" + page + genreParam);
 
+    // Primary: Extract from hydration JSON
+    const json = extractJsonData(raw);
+    if (json?.list?.items && Array.isArray(json.list.items)) {
+      return json.list.items.map(itemToSummary).filter(Boolean);
+    }
+
+    // Fallback: DOM Selectors
     const items = doc.querySelectorAll(".list-grid .lrow, .grid-updates .card, .swiper-slide .card");
     return items.map(cardToSummary).filter(Boolean);
   },
@@ -57,41 +80,54 @@ const plugin = {
   async search(query, offset, tagId) {
     const page = Math.floor(offset / 28) + 1;
     const tagParam = tagId ? "&genres_in=" + encodeURIComponent(tagId) : "";
-    const doc = await getDoc("/browse?q=" + encodeURIComponent(query) + "&sort=relevance%3Adesc&page=" + page + tagParam);
+    const { doc, raw } = await getDoc("/browse?q=" + encodeURIComponent(query) + "&sort=relevance%3Adesc&page=" + page + tagParam);
+
+    const json = extractJsonData(raw);
+    if (json?.list?.items && Array.isArray(json.list.items)) {
+      return json.list.items.map(itemToSummary).filter(Boolean);
+    }
 
     const items = doc.querySelectorAll(".list-grid .lrow, .grid-updates .card");
     return items.map(cardToSummary).filter(Boolean);
   },
 
   async detail(id) {
-    const doc = await getDoc("/title/" + id);
+    const { doc, raw } = await getDoc("/title/" + id);
+
+    const json = extractJsonData(raw);
+    const detailData = json?.queries ? Object.values(json.queries)[0] : null;
+
+    if (detailData && detailData.title) {
+      return {
+        id,
+        title: detailData.title,
+        altTitle: Array.isArray(detailData.altTitles) ? detailData.altTitles.join(", ") : undefined,
+        cover: abs(detailData.poster?.large || detailData.poster?.medium),
+        description: detailData.synopsis || "",
+        status: detailData.status,
+        author: (detailData.authors || []).map((a) => a.title).join(", ") || undefined,
+        lastChapter: detailData.latestChapter ? `Ch.${detailData.latestChapter}` : undefined,
+      };
+    }
+
     const root = doc.querySelector(".mpage");
     if (!root) return null;
 
-    const title = root.querySelector(".mpage__title")?.text()?.trim() || id;
-    const altTitle = root.querySelector(".mpage__alts-summary")?.text()?.trim();
     const posterImg = root.querySelector(".mpage__poster img");
-    const cover = abs(posterImg?.attr("src") || posterImg?.attr("data-src"));
-    const description = root.querySelector(".mpage__desc")?.text()?.trim();
-    const status = root.querySelector(".mpage__badge--status")?.text()?.trim();
-    const author = root.querySelector("a.mpage__chip[href*='authors']")?.text()?.trim() ||
-                   root.querySelector("a.mpage__chip[href*='artists']")?.text()?.trim();
-    const lastChapter = root.querySelector(".mchap-list .mchap-item:first-child .mchap-row__ch")?.text()?.trim();
-
     return {
       id,
-      title,
-      altTitle,
-      cover,
-      description,
-      status,
-      author,
-      lastChapter,
+      title: root.querySelector(".mpage__title")?.text()?.trim() || id,
+      altTitle: root.querySelector(".mpage__alts-summary")?.text()?.trim(),
+      cover: abs(posterImg?.attr("src") || posterImg?.attr("data-src")),
+      description: root.querySelector(".mpage__desc")?.text()?.trim(),
+      status: root.querySelector(".mpage__badge--status")?.text()?.trim(),
+      author: root.querySelector("a.mpage__chip[href*='authors']")?.text()?.trim(),
+      lastChapter: root.querySelector(".mchap-list .mchap-item:first-child .mchap-row__ch")?.text()?.trim(),
     };
   },
 
   async chapters(id) {
-    const doc = await getDoc("/title/" + id);
+    const { doc } = await getDoc("/title/" + id);
     const items = doc.querySelectorAll(".mchap-list .mchap-item");
 
     return items
@@ -101,11 +137,10 @@ const plugin = {
 
         const href = link.attr("href") || "";
         const rawCh = item.querySelector(".mchap-row__ch")?.text() || "";
-        const chapterNum = rawCh.replace(/^Ch\.\s*/i, "").trim();
 
         return {
           id: href.replace(/^\/title\//, "").replace(/\/$/, ""),
-          chapter: chapterNum || null,
+          chapter: rawCh.replace(/^Ch\.\s*/i, "").trim() || null,
           title: item.querySelector(".mchap-row__title")?.text()?.trim() || null,
           volume: item.querySelector(".mchap-row__vol")?.text()?.replace(/^Vol\.\s*/i, "").trim() || null,
           pages: 0,
@@ -117,24 +152,20 @@ const plugin = {
   },
 
   async pageUrls(chapterId) {
-    const res = await harbor.http(BASE + "/title/" + chapterId, { responseType: "text" });
-    if (!res.ok) throw new Error("HTTP " + res.status + " for " + chapterId);
+    const { doc, raw } = await getDoc("/title/" + chapterId);
 
-    const doc = harbor.parseHtml(res.body);
     const domImages = doc
       .querySelectorAll(".rpage-page img, .rpage-main img, .reader img")
       .map((img) => abs(img.attr("src") || img.attr("data-src")))
       .filter(Boolean);
 
-    if (domImages.length > 0) {
-      return [...new Set(domImages)];
-    }
+    if (domImages.length > 0) return [...new Set(domImages)];
 
     const images = [];
     const pattern = /(https?:\\?\/\\?\/[^"'\s\\]+\.(?:jpg|jpeg|png|webp))/gi;
     let match;
 
-    while ((match = pattern.exec(res.body)) !== null) {
+    while ((match = pattern.exec(raw)) !== null) {
       const cleanUrl = match[1].replace(/\\\/|\\/g, "/");
       if (!cleanUrl.includes("/avatars/") && !cleanUrl.includes("favicon") && !cleanUrl.includes("beacon")) {
         images.push(cleanUrl);
