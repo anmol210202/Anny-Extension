@@ -36,6 +36,24 @@
       "nsfw": true,
       "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/all/kagane/res/mipmap-xxxhdpi/ic_launcher.png",
       "entry": "kagane.plugin.js"
+    },
+    {
+      "id": "mangadotnet",
+      "name": "Mangadotnet",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": true,
+      "icon": "https://mangadot.net/favicon.ico",
+      "entry": "mangadotnet.plugin.js"
+    },
+    {
+      "id": "mangadex",
+      "name": "MangaDex",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": true,
+      "icon": "https://mangadex.org/favicon.ico",
+      "entry": "mangadex.plugin.js"
     }
   ]
 }
