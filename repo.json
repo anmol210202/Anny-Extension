@@ -7,7 +7,7 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": false,
-      "icon": "https://github.com/keiyoushi/extensions-source/blob/main/src/en/weebcentral/res/mipmap-xxxhdpi/ic_launcher.png",
+      "icon": "https://github.com/keiyoushi/extensions-source/blob/main/src/en/weebcentral/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
       "entry": "weebcentral.plugin.js"
     },
     {
@@ -16,7 +16,7 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": false,
-      "icon": "https://comix.to/favicon.ico",
+      "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/en/comix/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
       "entry": "comix.plugin.js"
     },
     {
@@ -25,7 +25,7 @@
       "version": "1.0.0",
       "lang": "all",
       "nsfw": true,
-      "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/all/kagane/res/mipmap-xxxhdpi/ic_launcher.png",
+      "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/all/kagane/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
       "entry": "kagane.plugin.js"
     },
     {
@@ -34,7 +34,7 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": false,
-      "icon": "https://mangadot.net/favicon.ico",
+      "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/en/mangadotnet/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
       "entry": "mangadotnet.plugin.js"
     },
     {
@@ -43,7 +43,7 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": true,
-      "icon": "https://mangadex.org/favicon.ico",
+      "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/all/mangadex/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
       "entry": "mangadex.plugin.js"
     },
     {
@@ -52,7 +52,7 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": false,
-      "icon": "https://github.com/yuzono/tachiyomi-extensions/blob/master/src/en/asurascans/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
+      "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/en/asurascans/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
       "entry": "asurascans.plugin.js"
     },
     {
@@ -61,7 +61,7 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": true,
-      "icon": "https://atsu.moe/favicon.ico",
+      "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/en/atsumaru/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
       "entry": "atsumaru.plugin.js"
     },
     {
@@ -70,7 +70,7 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": false,
-      "icon": "https://mangafire.to/favicon.ico",
+      "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/all/mangafire/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
       "entry": "mangafire.plugin.js"
     },
     {
