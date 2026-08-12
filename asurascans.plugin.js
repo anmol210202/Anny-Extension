@@ -84,7 +84,7 @@ const plugin = {
   },
 
   async search(query, offset, tagId) {
-    // 1. Primary Strategy: Asura REST API (Matches Tachiyomi Extension)
+    // 1. Primary Strategy: Asura REST API
     try {
       const params = new URLSearchParams({
         offset: offset.toString(),
@@ -122,7 +122,7 @@ const plugin = {
         if (items.length > 0) return items;
       }
     } catch (e) {
-      // Fall through to HTML scraping if API is unavailable
+      // Fall through to HTML scraping if API fails
     }
 
     // 2. Secondary Strategy: Web Scraping /browse
@@ -139,7 +139,6 @@ const plugin = {
 
       if (!res || !res.ok || !res.body) return [];
 
-      // Extract series list specifically from props
       const rawProps = extractAstroPropsFromRawHtml(res.body, "series");
       const seriesArray = rawProps?.series || rawProps?.data?.series || [];
 
@@ -159,7 +158,6 @@ const plugin = {
         if (items.length > 0) return items;
       }
 
-      // DOM fallback: strict card link matching requiring a cover image
       const doc = harbor.parseHtml(res.body);
       const links = doc.querySelectorAll('a[href*="/comics/"]');
       const results = [];
@@ -360,25 +358,44 @@ const plugin = {
     }
   },
 
+  // Static tags list to prevent network calls and timeouts during Harbor startup
   async tags() {
-    try {
-      const res = await harbor.http(`${BASE}/browse`, {
-        responseType: "text",
-        headers: { "User-Agent": USER_AGENT }
-      });
+    const genreList = [
+      { id: "action", name: "Action" },
+      { id: "adventure", name: "Adventure" },
+      { id: "comedy", name: "Comedy" },
+      { id: "crazy-mc", name: "Crazy MC" },
+      { id: "dark-fantasy", name: "Dark Fantasy" },
+      { id: "demon", name: "Demon" },
+      { id: "drama", name: "Drama" },
+      { id: "dungeons", name: "Dungeons" },
+      { id: "fantasy", name: "Fantasy" },
+      { id: "game", name: "Game" },
+      { id: "genius-mc", name: "Genius MC" },
+      { id: "isekai", name: "Isekai" },
+      { id: "kuchikuchi", name: "Kuchikuchi" },
+      { id: "magic", name: "Magic" },
+      { id: "martial-arts", name: "Martial Arts" },
+      { id: "murim", name: "Murim" },
+      { id: "mystery", name: "Mystery" },
+      { id: "necromancer", name: "Necromancer" },
+      { id: "overpowered", name: "Overpowered" },
+      { id: "psychological", name: "Psychological" },
+      { id: "regression", name: "Regression" },
+      { id: "reincarnation", name: "Reincarnation" },
+      { id: "revenge", name: "Revenge" },
+      { id: "romance", name: "Romance" },
+      { id: "school-life", name: "School Life" },
+      { id: "sci-fi", name: "Sci-fi" },
+      { id: "shoujo", name: "Shoujo" },
+      { id: "shounen", name: "Shounen" },
+      { id: "system", name: "System" },
+      { id: "tower", name: "Tower" },
+      { id: "tragedy", name: "Tragedy" },
+      { id: "villain", name: "Villain" },
+      { id: "violence", name: "Violence" }
+    ];
 
-      if (!res || !res.ok || !res.body) return [];
-
-      const props = extractAstroPropsFromRawHtml(res.body, "availableGenres");
-      const genres = props?.availableGenres || [];
-
-      return genres.map((g) => ({
-        id: g.slug || g.name,
-        name: decodeHtmlEntities(g.name),
-        group: "Genre"
-      }));
-    } catch (e) {
-      return [];
-    }
+    return genreList.map((g) => ({ id: g.id, name: g.name, group: "Genre" }));
   }
 };
