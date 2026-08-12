@@ -17,7 +17,7 @@ function abs(url) {
   return BASE + "/" + url;
 }
 
-// Extraction from embedded JSON hydration data
+// Extract embedded JSON hydration data if present
 function extractJsonData(rawHtml) {
   try {
     const match = rawHtml.match(/<script[^>]*id="initial-data"[^>]*>([\s\S]*?)<\/script>/i);
@@ -28,31 +28,47 @@ function extractJsonData(rawHtml) {
   }
 }
 
-function itemToSummary(item) {
-  if (!item || !item.hid) return null;
-  const slug = item.url ? item.url.replace(/^\/title\//, "") : `${item.hid}-${(item.title || "").toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-  
+function jsonItemToSummary(item) {
+  if (!item) return null;
+  const url = item.url || (item.hid ? `/title/${item.hid}` : "");
+  if (!url.includes("/title/")) return null;
+
   return {
-    id: slug.replace(/\/$/, ""),
-    title: item.title || "",
+    id: url.replace(/^\/title\//, "").replace(/\/$/, ""),
+    title: (item.title || "").trim(),
     cover: abs(item.poster?.medium || item.poster?.large),
   };
 }
 
+// Convert DOM element to summary (handles both wrapper <div> and direct <a> elements)
 function cardToSummary(el) {
-  const link = el.querySelector("a.lrow__title-link") || el.querySelector("a.card") || el.querySelector("a");
-  if (!link) return null;
+  if (!el) return null;
 
-  const href = link.attr("href") || "";
+  let href = el.attr("href") || "";
+  let linkEl = el;
+
+  if (!href.includes("/title/")) {
+    const childLink = el.querySelector("a[href*='/title/']");
+    if (!childLink) return null;
+    href = childLink.attr("href") || "";
+    linkEl = childLink;
+  }
+
   if (!href.includes("/title/")) return null;
 
+  const titleEl = el.querySelector(".card__title") ||
+                  el.querySelector(".lrow__title") ||
+                  el.querySelector(".side-item__title") ||
+                  el.querySelector("h3") ||
+                  linkEl;
+
   const img = el.querySelector("img");
-  const titleEl = el.querySelector(".lrow__title") || el.querySelector(".card__title") || el.querySelector("h3");
-  const rawSrc = img?.attr("src") || img?.attr("data-src");
+  const rawSrc = img?.attr("src") || img?.attr("data-src") || (img?.attr("srcset") || "").split(" ")[0];
+  const titleText = (titleEl?.text() || titleEl?.attr("title") || img?.attr("alt") || "").trim();
 
   return {
     id: href.replace(/^\/title\//, "").replace(/\/$/, ""),
-    title: (titleEl?.text() || link.attr("title") || img?.attr("alt") || "").trim(),
+    title: titleText,
     cover: abs(rawSrc),
   };
 }
@@ -66,14 +82,14 @@ const plugin = {
     const genreParam = tagId ? "&genres_in=" + encodeURIComponent(tagId) : "";
     const { doc, raw } = await getDoc("/browse?sort=views_7d%3Adesc&page=" + page + genreParam);
 
-    // Primary: Extract from hydration JSON
+    // 1. Try embedded JSON parsing
     const json = extractJsonData(raw);
     if (json?.list?.items && Array.isArray(json.list.items)) {
-      return json.list.items.map(itemToSummary).filter(Boolean);
+      return json.list.items.map(jsonItemToSummary).filter(Boolean);
     }
 
-    // Fallback: DOM Selectors
-    const items = doc.querySelectorAll(".list-grid .lrow, .grid-updates .card, .swiper-slide .card");
+    // 2. DOM fallback
+    const items = doc.querySelectorAll(".list-grid .lrow, .grid-updates .card, .swiper-slide .card, a.card");
     return items.map(cardToSummary).filter(Boolean);
   },
 
@@ -84,10 +100,10 @@ const plugin = {
 
     const json = extractJsonData(raw);
     if (json?.list?.items && Array.isArray(json.list.items)) {
-      return json.list.items.map(itemToSummary).filter(Boolean);
+      return json.list.items.map(jsonItemToSummary).filter(Boolean);
     }
 
-    const items = doc.querySelectorAll(".list-grid .lrow, .grid-updates .card");
+    const items = doc.querySelectorAll(".list-grid .lrow, .grid-updates .card, a.card");
     return items.map(cardToSummary).filter(Boolean);
   },
 
@@ -155,9 +171,9 @@ const plugin = {
     const { doc, raw } = await getDoc("/title/" + chapterId);
 
     const domImages = doc
-      .querySelectorAll(".rpage-page img, .rpage-main img, .reader img")
+      .querySelectorAll(".rpage-page img, .rpage-page__img, .rpage-main img")
       .map((img) => abs(img.attr("src") || img.attr("data-src")))
-      .filter(Boolean);
+      .filter((src) => src && !src.includes("/avatars/") && !src.includes("favicon") && !src.includes("beacon"));
 
     if (domImages.length > 0) return [...new Set(domImages)];
 
