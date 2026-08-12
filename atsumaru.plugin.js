@@ -196,9 +196,26 @@ const plugin = {
       };
     });
 
-    parsedChapters.sort((a, b) => a._num - b._num);
+    // Sort ascending, prioritizing Official scanlators if present
+    parsedChapters.sort((a, b) => {
+      if (a._num !== b._num) return a._num - b._num;
+      const aOfficial = String(a.group).toLowerCase().includes("official") ? 0 : 1;
+      const bOfficial = String(b.group).toLowerCase().includes("official") ? 0 : 1;
+      return aOfficial - bOfficial;
+    });
 
-    return parsedChapters.map(({ _num, ...rest }) => rest);
+    // Deduplicate by chapter number
+    const chapterMap = new Map();
+    for (const ch of parsedChapters) {
+      if (!chapterMap.has(ch._num)) {
+        chapterMap.set(ch._num, ch);
+      }
+    }
+
+    const deduplicated = Array.from(chapterMap.values());
+    deduplicated.sort((a, b) => a._num - b._num);
+
+    return deduplicated.map(({ _num, ...rest }) => rest);
   },
 
   async pageUrls(chapterId) {
