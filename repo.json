@@ -25,8 +25,17 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": true,
-      "icon": "https://weebcentral.com/static/favicon.png",
+      "icon": "https://github.com/keiyoushi/extensions-source/blob/main/src/en/weebcentral/res/mipmap-xxxhdpi/ic_launcher.png",
       "entry": "weebcentral.plugin.js"
+    },
+    {
+      "id": "kagane",
+      "name": "Kagane",
+      "version": "1.0.0",
+      "lang": "all",
+      "nsfw": true,
+      "icon": "https://raw.githubusercontent.com/keiyoushi/extensions-source/main/src/all/kagane/res/mipmap-xxxhdpi/ic_launcher.png",
+      "entry": "kagane.plugin.js"
     }
   ]
 }
