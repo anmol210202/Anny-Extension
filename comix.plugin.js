@@ -1,14 +1,13 @@
-const BASE_DOMAINS = ["https://comix.to", "https://comix.ws"];
+const BASE = "https://comix.to";
 const USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
-function abs(url, base) {
+function abs(url) {
   if (!url) return undefined;
-  const host = base || BASE_DOMAINS[0];
   if (/^https?:\/\//i.test(url)) return url;
   if (url.startsWith("//")) return "https:" + url;
-  if (url.startsWith("/")) return host + url;
-  return host + "/" + url;
+  if (url.startsWith("/")) return BASE + url;
+  return BASE + "/" + url;
 }
 
 function cleanPath(urlOrPath) {
@@ -32,8 +31,7 @@ function decodeHtmlEntities(str) {
 
 function extractInitialData(html) {
   if (!html) return null;
-  const regex = /<script[^>]*id=["']?initial-data["']?[^>]*>([\s\S]*?)<\/script>/i;
-  const match = html.match(regex);
+  const match = html.match(/<script[^>]*id=["']?initial-data["']?[^>]*>([\s\S]*?)<\/script>/i);
   if (!match || !match[1]) return null;
 
   const content = match[1].trim();
@@ -48,7 +46,7 @@ function extractInitialData(html) {
   }
 }
 
-function findMangaItems(obj) {
+function findMangaList(obj) {
   if (!obj || typeof obj !== "object") return null;
 
   if (Array.isArray(obj)) {
@@ -56,25 +54,19 @@ function findMangaItems(obj) {
       obj.length > 0 &&
       typeof obj[0] === "object" &&
       obj[0] !== null &&
-      (obj[0].title || obj[0].hid || obj[0].poster)
+      (obj[0].hid || obj[0].poster || (obj[0].title && (obj[0].url || obj[0].contentRating)))
     ) {
       return obj;
     }
     for (const item of obj) {
-      const found = findMangaItems(item);
+      const found = findMangaList(item);
       if (found) return found;
     }
     return null;
   }
 
-  if (Array.isArray(obj.items) && obj.items.length > 0) {
-    if (obj.items[0].title || obj.items[0].hid || obj.items[0].poster) {
-      return obj.items;
-    }
-  }
-
   for (const key of Object.keys(obj)) {
-    const found = findMangaItems(obj[key]);
+    const found = findMangaList(obj[key]);
     if (found) return found;
   }
 
@@ -84,7 +76,11 @@ function findMangaItems(obj) {
 function findDetailObject(obj) {
   if (!obj || typeof obj !== "object") return null;
 
-  if (obj.hid && (obj.title || obj.synopsis !== undefined)) {
+  if (
+    !Array.isArray(obj) &&
+    obj.hid &&
+    (obj.title || obj.synopsis !== undefined || obj.poster)
+  ) {
     return obj;
   }
 
@@ -104,7 +100,7 @@ function findDetailObject(obj) {
   return null;
 }
 
-function findChapterItems(obj) {
+function findChapterList(obj) {
   if (!obj || typeof obj !== "object") return null;
 
   if (Array.isArray(obj)) {
@@ -112,26 +108,20 @@ function findChapterItems(obj) {
       obj.length > 0 &&
       typeof obj[0] === "object" &&
       obj[0] !== null &&
-      obj[0].number !== undefined &&
+      (obj[0].number !== undefined || obj[0].votes !== undefined) &&
       (obj[0].id !== undefined || obj[0].url !== undefined)
     ) {
       return obj;
     }
     for (const item of obj) {
-      const found = findChapterItems(item);
+      const found = findChapterList(item);
       if (found) return found;
     }
     return null;
   }
 
-  if (Array.isArray(obj.items) && obj.items.length > 0) {
-    if (obj.items[0].number !== undefined) {
-      return obj.items;
-    }
-  }
-
   for (const key of Object.keys(obj)) {
-    const found = findChapterItems(obj[key]);
+    const found = findChapterList(obj[key]);
     if (found) return found;
   }
 
@@ -144,7 +134,7 @@ function findPagesObject(obj) {
   if (obj.pages && Array.isArray(obj.pages.items)) {
     return obj.pages;
   }
-  if (obj.baseUrl && Array.isArray(obj.items)) {
+  if (obj.baseUrl && Array.isArray(obj.items) && obj.items.length > 0) {
     return obj;
   }
 
@@ -164,35 +154,23 @@ function findPagesObject(obj) {
   return null;
 }
 
-async function fetchApiOrHtml(path, isJson = true) {
-  for (const domain of BASE_DOMAINS) {
-    const url = domain + path;
-    try {
-      const res = await harbor.http(url, {
-        responseType: "text",
-        headers: {
-          "User-Agent": USER_AGENT,
-          "Accept": isJson
-            ? "application/json, text/plain, */*"
-            : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        }
-      });
-      if (res && res.ok && res.body) {
-        if (isJson) {
-          try {
-            const parsed = typeof res.body === "string" ? JSON.parse(res.body) : res.body;
-            if (parsed) return { data: parsed, domain };
-          } catch (e) {}
-        } else {
-          return { data: res.body, domain };
-        }
+async function requestHtml(url) {
+  try {
+    const res = await harbor.http(url, {
+      responseType: "text",
+      headers: {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
       }
-    } catch (e) {}
+    });
+    if (!res || !res.ok || !res.body) return null;
+    return res.body;
+  } catch (e) {
+    return null;
   }
-  return null;
 }
 
-function parseMangaCard(item, domain) {
+function parseMangaCard(item) {
   if (!item) return null;
   const rawUrl = item.url || item.hid || "";
   const slug = cleanPath(rawUrl);
@@ -208,7 +186,7 @@ function parseMangaCard(item, domain) {
   return {
     id: slug,
     title: decodeHtmlEntities(item.title || "Unknown"),
-    cover: abs(cover, domain)
+    cover: abs(cover)
   };
 }
 
@@ -224,36 +202,6 @@ const plugin = {
     const page = Math.floor(offset / 32) + 1;
     const cleanQuery = (query || "").trim();
 
-    // 1. Direct REST API Strategy
-    try {
-      const apiParams = new URLSearchParams({
-        page: page.toString(),
-        limit: "32",
-        content_rating: "safe,suggestive,erotica,pornographic"
-      });
-
-      if (cleanQuery) {
-        apiParams.set("q", cleanQuery);
-        apiParams.set("sort", "relevance:desc");
-      } else {
-        apiParams.set("order[score]", "desc");
-      }
-
-      if (tagId) {
-        apiParams.append("genres_in[]", tagId);
-      }
-
-      const apiRes = await fetchApiOrHtml(`/api/v1/manga?${apiParams.toString()}`, true);
-      if (apiRes && apiRes.data) {
-        const rawList = apiRes.data.result?.items || apiRes.data.items || apiRes.data.data || [];
-        if (Array.isArray(rawList) && rawList.length > 0) {
-          const items = rawList.map((item) => parseMangaCard(item, apiRes.domain)).filter(Boolean);
-          if (items.length > 0) return items;
-        }
-      }
-    } catch (e) {}
-
-    // 2. SSR HTML Fallback Strategy
     try {
       const browseParams = new URLSearchParams({
         page: page.toString(),
@@ -262,20 +210,22 @@ const plugin = {
 
       if (cleanQuery) {
         browseParams.set("q", cleanQuery);
+        browseParams.set("sort", "relevance:desc");
       } else {
         browseParams.set("order[score]", "desc");
       }
+
       if (tagId) {
         browseParams.append("genres_in[]", tagId);
       }
 
-      const htmlRes = await fetchApiOrHtml(`/browse?${browseParams.toString()}`, false);
-      if (htmlRes && htmlRes.data) {
-        const initialData = extractInitialData(htmlRes.data);
-        const items = findMangaItems(initialData);
+      const html = await requestHtml(`${BASE}/browse?${browseParams.toString()}`);
+      if (html) {
+        const initialData = extractInitialData(html);
+        const items = findMangaList(initialData);
 
         if (Array.isArray(items) && items.length > 0) {
-          const parsed = items.map((item) => parseMangaCard(item, htmlRes.domain)).filter(Boolean);
+          const parsed = items.map(parseMangaCard).filter(Boolean);
           if (parsed.length > 0) return parsed;
         }
       }
@@ -287,27 +237,17 @@ const plugin = {
   async detail(id) {
     try {
       const slug = cleanPath(id);
+      const html = await requestHtml(`${BASE}/title/${slug}`);
+      if (!html) return null;
 
-      const apiRes = await fetchApiOrHtml(`/api/v1/manga/${slug}`, true);
-      let manga = apiRes?.data?.result || apiRes?.data;
-      let domain = apiRes?.domain || BASE_DOMAINS[0];
+      const initialData = extractInitialData(html);
+      const manga = findDetailObject(initialData);
 
-      if (!manga || !manga.title) {
-        const htmlRes = await fetchApiOrHtml(`/title/${slug}`, false);
-        if (htmlRes && htmlRes.data) {
-          domain = htmlRes.domain;
-          const initialData = extractInitialData(htmlRes.data);
-          manga = findDetailObject(initialData);
-
-          if (!manga) {
-            const doc = harbor.parseHtml(htmlRes.data);
-            const h1 = doc.querySelector("h1");
-            return { id: slug, title: h1 ? h1.text() : slug };
-          }
-        }
+      if (!manga) {
+        const doc = harbor.parseHtml(html);
+        const h1 = doc.querySelector("h1");
+        return { id: slug, title: h1 ? h1.text() : slug };
       }
-
-      if (!manga) return null;
 
       let status = "unknown";
       if (manga.status) {
@@ -341,7 +281,7 @@ const plugin = {
         id: slug,
         title: decodeHtmlEntities(manga.title || slug),
         altTitle: altStr || undefined,
-        cover: abs(cover, domain),
+        cover: abs(cover),
         description:
           decodeHtmlEntities((manga.synopsis || "").replace(/<[^>]*>/g, "").trim()) ||
           undefined,
@@ -356,20 +296,11 @@ const plugin = {
   async chapters(id) {
     try {
       const slug = cleanPath(id);
-      let rawChapters = [];
+      const html = await requestHtml(`${BASE}/title/${slug}`);
+      if (!html) return [];
 
-      const apiRes = await fetchApiOrHtml(`/api/v1/manga/${slug}/chapters?limit=500`, true);
-      if (apiRes && apiRes.data) {
-        rawChapters = apiRes.data.result?.items || apiRes.data.items || apiRes.data || [];
-      }
-
-      if (!Array.isArray(rawChapters) || rawChapters.length === 0) {
-        const htmlRes = await fetchApiOrHtml(`/title/${slug}`, false);
-        if (htmlRes && htmlRes.data) {
-          const initialData = extractInitialData(htmlRes.data);
-          rawChapters = findChapterItems(initialData) || [];
-        }
-      }
+      const initialData = extractInitialData(html);
+      const rawChapters = findChapterList(initialData) || [];
 
       if (!Array.isArray(rawChapters)) return [];
 
@@ -415,26 +346,11 @@ const plugin = {
       const cleanChPath = cleanPath(chapterId);
       const fullPath = cleanChPath.startsWith("title/") ? cleanChPath : `title/${cleanChPath}`;
 
-      let pagesObj = null;
-      let domain = BASE_DOMAINS[0];
+      const html = await requestHtml(`${BASE}/${fullPath}`);
+      if (!html) return [];
 
-      const htmlRes = await fetchApiOrHtml(`/${fullPath}`, false);
-      if (htmlRes && htmlRes.data) {
-        domain = htmlRes.domain;
-        const initialData = extractInitialData(htmlRes.data);
-        pagesObj = findPagesObject(initialData);
-      }
-
-      if (!pagesObj || !Array.isArray(pagesObj.items)) {
-        const chIdMatch = cleanChPath.match(/\/(\d+)(?:-|$)/) || cleanChPath.match(/^(\d+)$/);
-        const chapterNumOrId = chIdMatch ? chIdMatch[1] : cleanChPath;
-
-        const apiRes = await fetchApiOrHtml(`/api/v1/chapter/${chapterNumOrId}`, true);
-        if (apiRes && apiRes.data) {
-          domain = apiRes.domain;
-          pagesObj = apiRes.data.result?.pages || apiRes.data.pages || apiRes.data;
-        }
-      }
+      const initialData = extractInitialData(html);
+      const pagesObj = findPagesObject(initialData);
 
       if (!pagesObj || !Array.isArray(pagesObj.items)) {
         return [];
@@ -462,7 +378,7 @@ const plugin = {
             finalUrl = `${full}#scrambled`;
           }
 
-          return abs(finalUrl, domain);
+          return abs(finalUrl);
         })
         .filter(Boolean);
     } catch (e) {
