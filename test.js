@@ -71,7 +71,7 @@ function loadPlugin(pluginFile) {
 
 async function runPluginTests(pluginFile) {
   console.log(`\n========================================`);
-  console.log(`🚀 TESTING PLUGIN: ${pluginFile}`);
+  console.log(`🚀 DIAGNOSTIC TEST RUNNER: ${pluginFile}`);
   console.log(`========================================`);
 
   if (!fs.existsSync(pluginFile)) {
@@ -82,7 +82,7 @@ async function runPluginTests(pluginFile) {
   const plugin = loadPlugin(pluginFile);
   console.log(`Loaded plugin ID: "${plugin.id}" | Name: "${plugin.name}"`);
 
-  // 1. Tags
+  // 1. Tags Test
   try {
     console.log("\n--- 1. Testing tags() ---");
     if (typeof plugin.tags === "function") {
@@ -94,59 +94,69 @@ async function runPluginTests(pluginFile) {
     console.error("❌ Error in tags():", err.message);
   }
 
-  // 2. Popular
+  // 2. Popular Test
   let popularItems = [];
   try {
     console.log("\n--- 2. Testing popular(0) ---");
     popularItems = await plugin.popular(0);
-    console.log(`✅ Fetched ${popularItems?.length || 0} titles.`);
-    if (popularItems?.length > 0) console.log("Sample:", popularItems.slice(0, 2));
+    console.log(`✅ Fetched ${popularItems?.length || 0} popular titles.`);
+    if (popularItems?.length > 0) console.log("Top 3 Popular Titles:", popularItems.slice(0, 3).map(i => i.title));
   } catch (err) {
     console.error("❌ Error in popular():", err.message);
   }
 
-  // 3. Search
+  // 3. Search Test
   let searchItems = [];
   try {
     console.log("\n--- 3. Testing search('jujutsu', 0) ---");
     searchItems = await plugin.search("jujutsu", 0);
     console.log(`✅ Fetched ${searchItems?.length || 0} search results.`);
-    if (searchItems?.length > 0) console.log("Sample:", searchItems.slice(0, 2));
+    if (searchItems?.length > 0) console.log("Search Results:", searchItems.map(i => i.title));
   } catch (err) {
     console.error("❌ Error in search():", err.message);
   }
 
-  // Combine items to test detail, chapters, and pageUrls
+  // Combine items to find a series with chapters
   const testCandidates = [...searchItems, ...popularItems];
-  if (testCandidates.length === 0) {
-    console.warn("⚠️ Skipping detail/chapters: No items available to test.");
-    return;
-  }
-
   let selectedChapter = null;
+
   for (const item of testCandidates) {
     try {
       console.log(`\n--- 4. Testing detail('${item.id}') ---`);
       const detail = await plugin.detail(item.id);
-      console.log("✅ Detail Result:", detail);
+      console.log("✅ Detail Result:", {
+        title: detail.title,
+        status: detail.status,
+        author: detail.author,
+        coverValid: /^https?:\/\//.test(detail.cover || "")
+      });
 
       console.log(`\n--- 5. Testing chapters('${item.id}') ---`);
       const chapters = await plugin.chapters(item.id);
       console.log(`✅ Fetched ${chapters?.length || 0} chapters for "${item.title}".`);
 
       if (chapters?.length > 0) {
-        console.log("First chapter:", chapters[0]);
+        console.log("📊 Chapter Sequence Check:");
+        console.log("  - First Chapter [Index 0]:", chapters[0].title, `(Ch: ${chapters[0].chapter})`);
+        console.log("  - Last Chapter [Index N]:", chapters[chapters.length - 1].title, `(Ch: ${chapters[chapters.length - 1].chapter})`);
+
+        if (parseFloat(chapters[0].chapter) < parseFloat(chapters[chapters.length - 1].chapter)) {
+          console.log("  ✅ Order Verification PASSED: Chapters start from Chapter 1 and end at the Latest Chapter.");
+        } else {
+          console.log("  ⚠️ Order Verification WARNING: Sequence might be inverted.");
+        }
+
         selectedChapter = chapters[0];
-        break; // Stop loop once chapters are found
+        break;
       }
     } catch (err) {
       console.error(`❌ Error testing candidate '${item.id}':`, err.message);
     }
   }
 
-  // 6. Page URLs
+  // 6. Page URLs Test
   if (!selectedChapter?.id) {
-    console.warn("⚠️ Skipping pageUrls: No valid chapter found across test candidates.");
+    console.warn("⚠️ Skipping pageUrls: No valid chapter found.");
     return;
   }
 
@@ -154,7 +164,10 @@ async function runPluginTests(pluginFile) {
     console.log(`\n--- 6. Testing pageUrls('${selectedChapter.id}') ---`);
     const pages = await plugin.pageUrls(selectedChapter.id);
     console.log(`✅ Fetched ${pages?.length || 0} page URLs.`);
-    if (pages?.length > 0) console.log("Sample pages:", pages.slice(0, 3));
+    if (pages?.length > 0) {
+      console.log("Sample Pages:", pages.slice(0, 3));
+      console.log("Image URL Protocol Check:", pages.every(p => p.startsWith("http")) ? "PASSED" : "FAILED");
+    }
   } catch (err) {
     console.error("❌ Error in pageUrls():", err.message);
   }

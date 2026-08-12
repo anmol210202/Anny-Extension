@@ -77,7 +77,8 @@ const plugin = {
       limit: "32",
       offset: offset.toString(),
       display_mode: "Full Display",
-      sort: "Popularity"
+      sort: "Popularity",
+      order: "Descending"
     });
     if (tagId) params.append("included_tag", tagId);
 
@@ -91,7 +92,9 @@ const plugin = {
       text: cleanQuery,
       limit: "32",
       offset: offset.toString(),
-      display_mode: "Full Display"
+      display_mode: "Full Display",
+      sort: "Best Match",
+      order: "Descending"
     });
     if (tagId) params.append("included_tag", tagId);
 
@@ -190,7 +193,6 @@ const plugin = {
         titleText = a.text();
       }
 
-      // Remove unwanted UI elements and clean up spacing
       titleText = titleText.replace(/Last Read/gi, "").replace(/\s+/g, " ").trim();
       if (!titleText) continue;
 
@@ -210,7 +212,8 @@ const plugin = {
       });
     }
 
-    return chaptersList;
+    // Reverses list so Chapter 1 is at index 0 and latest chapter is at the end
+    return chaptersList.reverse();
   },
 
   async pageUrls(chapterId) {
