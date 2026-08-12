@@ -25,6 +25,35 @@ function checkSelectorCompatibility(selector) {
   }
 }
 
+function checkDuplicates(items, idKey = "id", label = "items") {
+  if (!Array.isArray(items) || items.length === 0) return;
+  const seen = new Set();
+  const duplicates = new Set();
+
+  for (const item of items) {
+    const val = typeof item === "string" ? item : item[idKey];
+    if (val !== undefined && val !== null) {
+      if (seen.has(val)) {
+        duplicates.add(val);
+      } else {
+        seen.add(val);
+      }
+    }
+  }
+
+  if (duplicates.size > 0) {
+    console.warn(`  ⚠️ HARBOR DUPLICATE WARNING: Found ${duplicates.size} duplicate ${label}! Sample duplicates:`, Array.from(duplicates).slice(0, 3));
+  } else {
+    console.log(`  ✅ Duplicate Check PASSED: All ${label} are unique.`);
+  }
+}
+
+function checkHarborLimits(count, maxLimit, label) {
+  if (count > maxLimit) {
+    console.warn(`  ⚠️ HARBOR CAP WARNING: Returned ${count} ${label}, exceeding Harbor's limit of ${maxLimit}. Excess items will be truncated by Harbor.`);
+  }
+}
+
 global.harbor = {
   register(provider) {
     global.plugin = provider;
@@ -41,7 +70,6 @@ global.harbor = {
         "host", "authorization", "origin", "referer", "content-length", "connection"
       ];
 
-      // Allow passing optional local test cookies via COOKIE env var
       if (!opts.headers) opts.headers = {};
       if (process.env.COOKIE && !opts.headers["Cookie"] && !opts.headers["cookie"]) {
         opts.headers["Cookie"] = process.env.COOKIE;
@@ -95,7 +123,6 @@ global.harbor = {
         console.error(`     Response Snippet: "${snippet}"`);
       }
 
-      // Check for backend error messages inside body
       if (rawBody.includes('"message":') || rawBody.includes('"error":')) {
         try {
           const parsedErr = JSON.parse(rawBody);
@@ -210,6 +237,12 @@ async function runPluginTests(pluginFile) {
       console.log(`✅ Fetched ${tags?.length || 0} tags.`);
       if (tags?.length > 0) {
         console.log("Sample:", tags.slice(0, 3));
+        checkDuplicates(tags, "id", "tags");
+        checkHarborLimits(tags.length, 1000, "tags");
+        const invalidTags = tags.filter((t) => !t.id || !t.name);
+        if (invalidTags.length > 0) {
+          console.warn(`  ⚠️ HARBOR SANITIZATION WARNING: ${invalidTags.length} tags missing 'id' or 'name'.`);
+        }
       }
     }
   } catch (err) {
@@ -224,6 +257,8 @@ async function runPluginTests(pluginFile) {
     console.log(`✅ Fetched ${popularItems?.length || 0} popular titles.`);
     if (popularItems?.length > 0) {
       console.log("Top 3 Popular Titles:", popularItems.slice(0, 3).map((i) => i.title));
+      checkDuplicates(popularItems, "id", "popular manga items");
+      checkHarborLimits(popularItems.length, 500, "summaries");
       await testCoverUrl(popularItems[0].cover, "Popular Title");
     }
   } catch (err) {
@@ -233,7 +268,7 @@ async function runPluginTests(pluginFile) {
   // 3. Search Test
   let searchItems = [];
   try {
-    let searchQuery = "jujutsu";
+    let searchQuery = "The";
     if (popularItems?.length > 0 && popularItems[0].title) {
       const extractedWord = popularItems[0].title.split(" ")[0].replace(/[^a-zA-Z0-9]/g, "").trim();
       if (extractedWord) searchQuery = extractedWord;
@@ -242,12 +277,15 @@ async function runPluginTests(pluginFile) {
     console.log(`\n--- 3. Testing search('${searchQuery}', 0) ---`);
     searchItems = await plugin.search(searchQuery, 0);
     console.log(`✅ Fetched ${searchItems?.length || 0} search results.`);
-    if (searchItems?.length > 0) console.log("Search Results:", searchItems.map((i) => i.title));
+    if (searchItems?.length > 0) {
+      console.log("Search Results:", searchItems.map((i) => i.title));
+      checkDuplicates(searchItems, "id", "search manga items");
+      checkHarborLimits(searchItems.length, 500, "summaries");
+    }
   } catch (err) {
     console.error("❌ Error in search():", err);
   }
 
-  // Combine candidates
   const testCandidates = [...searchItems, ...popularItems];
   let selectedChapter = null;
 
@@ -274,6 +312,9 @@ async function runPluginTests(pluginFile) {
       console.log(`✅ Fetched ${chapters?.length || 0} chapters for "${item.title}".`);
 
       if (chapters?.length > 0) {
+        checkDuplicates(chapters, "id", "chapters");
+        checkHarborLimits(chapters.length, 5000, "chapters");
+
         console.log("📊 Chapter Sequence Check:");
         console.log("  - First Chapter [Index 0]:", chapters[0].title, `(Ch: ${chapters[0].chapter})`);
         console.log("  - Last Chapter [Index N]:", chapters[chapters.length - 1].title, `(Ch: ${chapters[chapters.length - 1].chapter})`);
@@ -288,7 +329,7 @@ async function runPluginTests(pluginFile) {
         break;
       }
     } catch (err) {
-      console.error(`❌ Error testing candidate '${item.id}':`, err);
+      console.error(`❌ Error testing candidate '${item.id}':`, err.message);
     }
   }
 
@@ -304,6 +345,9 @@ async function runPluginTests(pluginFile) {
     console.log(`✅ Fetched ${pages?.length || 0} page URLs.`);
     if (pages?.length > 0) {
       console.log("Sample Pages:", pages.slice(0, 3));
+      checkDuplicates(pages, null, "page URLs");
+      checkHarborLimits(pages.length, 2000, "page URLs");
+
       const invalidPages = pages.filter((p) => !/^https?:\/\//i.test(p));
       if (invalidPages.length > 0) {
         console.error(`❌ HARBOR SANITIZATION ERROR: ${invalidPages.length} relative or invalid page URLs!`);
@@ -312,7 +356,7 @@ async function runPluginTests(pluginFile) {
       }
     }
   } catch (err) {
-    console.error("❌ Error in pageUrls():", err);
+    console.error("❌ Error in pageUrls():", err.message);
   }
 }
 

@@ -72,6 +72,15 @@
       "nsfw": true,
       "icon": "https://atsu.moe/favicon.ico",
       "entry": "atsumaru.plugin.js"
+    },
+    {
+      "id": "mangafire",
+      "name": "MangaFire",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": false,
+      "icon": "https://mangafire.to/favicon.ico",
+      "entry": "mangafire.plugin.js"
     }
   ]
 }
