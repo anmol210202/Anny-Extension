@@ -20,7 +20,7 @@ function decodeHtmlEntities(str) {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&amp;/g, "&")
-    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
 }
 
@@ -53,81 +53,26 @@ function unwrapAstro(data) {
   return data;
 }
 
-function extractAstroPropsFromHtml(html, ...keys) {
+function extractAstroPropsFromRawHtml(html, ...requiredKeys) {
   if (!html) return null;
-  const regex = /props=(?:"([^"]+)"|'([^']+)')/g;
+  const propRegex = /props=(?:"([^"]+)"|'([^']+)')/g;
   let match;
 
-  while ((match = regex.exec(html)) !== null) {
+  while ((match = propRegex.exec(html)) !== null) {
     const rawAttr = match[1] || match[2];
     if (!rawAttr) continue;
 
-    const hasAllKeys = keys.every((k) => rawAttr.includes(k));
-    if (!hasAllKeys) continue;
+    const hasKeys = requiredKeys.every((k) => rawAttr.includes(k));
+    if (!hasKeys) continue;
 
     try {
       const unescaped = decodeHtmlEntities(rawAttr);
       const parsed = JSON.parse(unescaped);
       const unwrapped = unwrapAstro(parsed);
       if (unwrapped) return unwrapped;
-    } catch (e) {
-      // Continue to next match
-    }
+    } catch (e) {}
   }
   return null;
-}
-
-// Recursively walks the Astro props tree to find any array containing manga objects
-function findMangaArray(obj) {
-  if (!obj) return [];
-  if (Array.isArray(obj)) {
-    if (obj.length > 0 && typeof obj[0] === "object" && (obj[0].title || obj[0].slug || obj[0].public_url)) {
-      return obj;
-    }
-    for (const item of obj) {
-      const found = findMangaArray(item);
-      if (found.length > 0) return found;
-    }
-  } else if (typeof obj === "object") {
-    for (const key in obj) {
-      const found = findMangaArray(obj[key]);
-      if (found.length > 0) return found;
-    }
-  }
-  return [];
-}
-
-// Safely extracts title from DOM elements while skipping rating badges (e.g. 8.3, 9.8)
-function extractTitleFromCard(aEl) {
-  if (!aEl) return "";
-
-  const attrTitle = aEl.attr("title");
-  if (attrTitle && attrTitle.trim() && !/^\d+(\.\d+)?$/.test(attrTitle.trim())) {
-    return decodeHtmlEntities(attrTitle.trim());
-  }
-
-  for (const tag of ["h1", "h2", "h3", "h4"]) {
-    const heading = aEl.querySelector(tag);
-    if (heading) {
-      const txt = heading.text().trim();
-      if (txt && !/^\d+(\.\d+)?$/.test(txt)) return decodeHtmlEntities(txt);
-    }
-  }
-
-  const spans = aEl.querySelectorAll("span, div, p");
-  for (const el of spans) {
-    const txt = el.text().trim();
-    if (
-      txt &&
-      !/^\d+(\.\d+)?$/.test(txt) &&
-      !/^(ongoing|completed|hiatus|axed|dropped|bookmark|rating)$/i.test(txt) &&
-      !/^ch(apter)?\s*\d+/i.test(txt)
-    ) {
-      return decodeHtmlEntities(txt);
-    }
-  }
-
-  return decodeHtmlEntities(aEl.text().trim());
 }
 
 const plugin = {
@@ -139,10 +84,50 @@ const plugin = {
   },
 
   async search(query, offset, tagId) {
-    const page = Math.floor(offset / 20) + 1;
-
-    // Strategy 1: /browse Page HTML Scraping
+    // 1. Primary Strategy: Asura REST API (Matches Tachiyomi Extension)
     try {
+      const params = new URLSearchParams({
+        offset: offset.toString(),
+        limit: "20",
+        sort: "popular"
+      });
+
+      if (query && query.trim()) {
+        params.set("search", query.trim());
+        params.delete("sort");
+      }
+      if (tagId) {
+        params.set("genres", tagId);
+      }
+
+      const apiUrl = `${API_BASE}/series?${params.toString()}`;
+      const res = await harbor.http(apiUrl, {
+        responseType: "json",
+        headers: { "User-Agent": USER_AGENT }
+      });
+
+      if (res && res.ok && res.body && Array.isArray(res.body.data)) {
+        const items = res.body.data
+          .map((item) => {
+            const slug = cleanSlug(item.slug || item.public_url || "");
+            const title = decodeHtmlEntities(item.title || "");
+            const cover = abs(item.cover || item.coverUrl);
+
+            if (!slug || !title || /^\d+(\.\d+)?$/.test(title)) return null;
+
+            return { id: slug, title, cover };
+          })
+          .filter(Boolean);
+
+        if (items.length > 0) return items;
+      }
+    } catch (e) {
+      // Fall through to HTML scraping if API is unavailable
+    }
+
+    // 2. Secondary Strategy: Web Scraping /browse
+    try {
+      const page = Math.floor(offset / 20) + 1;
       const browseUrl = `${BASE}/browse?page=${page}${
         query ? "&search=" + encodeURIComponent(query.trim()) : ""
       }${tagId ? "&genres=" + encodeURIComponent(tagId) : ""}`;
@@ -152,93 +137,60 @@ const plugin = {
         headers: { "User-Agent": USER_AGENT }
       });
 
-      if (res && res.ok && res.body) {
-        const props =
-          extractAstroPropsFromHtml(res.body, "title") ||
-          extractAstroPropsFromHtml(res.body, "series") ||
-          extractAstroPropsFromHtml(res.body, "manga");
+      if (!res || !res.ok || !res.body) return [];
 
-        const seriesList = findMangaArray(props);
+      // Extract series list specifically from props
+      const rawProps = extractAstroPropsFromRawHtml(res.body, "series");
+      const seriesArray = rawProps?.series || rawProps?.data?.series || [];
 
-        if (seriesList.length > 0) {
-          const items = seriesList
-            .map((item) => {
-              const title = decodeHtmlEntities(item.title || "");
-              if (!title || /^\d+(\.\d+)?$/.test(title)) return null;
+      if (Array.isArray(seriesArray) && seriesArray.length > 0) {
+        const items = seriesArray
+          .map((item) => {
+            const slug = cleanSlug(item.slug || item.public_url || "");
+            const title = decodeHtmlEntities(item.title || "");
+            const cover = abs(item.cover || item.coverUrl || item.thumbnail);
 
-              return {
-                id: cleanSlug(item.slug || item.public_url || ""),
-                title,
-                cover: abs(item.cover || item.coverUrl)
-              };
-            })
-            .filter((i) => i && i.id && i.title);
+            if (!slug || !title || !cover || /^\d+(\.\d+)?$/.test(title)) return null;
 
-          if (items.length > 0) return items;
+            return { id: slug, title, cover };
+          })
+          .filter(Boolean);
+
+        if (items.length > 0) return items;
+      }
+
+      // DOM fallback: strict card link matching requiring a cover image
+      const doc = harbor.parseHtml(res.body);
+      const links = doc.querySelectorAll('a[href*="/comics/"]');
+      const results = [];
+      const seen = new Set();
+
+      for (const a of links) {
+        const href = a.attr("href") || "";
+        const slug = cleanSlug(href);
+        if (!slug || seen.has(slug)) continue;
+
+        const img = a.querySelector("img");
+        const cover = abs(img?.attr("src") || img?.attr("data-src"));
+        if (!cover || cover.includes("logo") || cover.includes("brand") || cover.includes("avatar")) continue;
+
+        const titleEl = a.querySelector("h3") || a.querySelector("h2") || a.querySelector("span");
+        let title = titleEl ? decodeHtmlEntities(titleEl.text().trim()) : "";
+
+        if (!title || /^\d+(\.\d+)?$/.test(title) || /^(ongoing|completed|hiatus)$/i.test(title)) {
+          title = decodeHtmlEntities(a.text().trim());
         }
 
-        // DOM Fallback
-        const doc = harbor.parseHtml(res.body);
-        const links = doc.querySelectorAll('a[href*="/comics/"]');
-        const results = [];
-        const seen = new Set();
-
-        for (const a of links) {
-          const href = a.attr("href") || "";
-          const slug = cleanSlug(href);
-          if (!slug || seen.has(slug)) continue;
-
-          const title = extractTitleFromCard(a);
-          if (!title || /^\d+(\.\d+)?$/.test(title)) continue;
-
+        if (title && !/^\d+(\.\d+)?$/.test(title)) {
           seen.add(slug);
-          const img = a.querySelector("img");
-
-          results.push({
-            id: slug,
-            title,
-            cover: abs(img?.attr("src") || img?.attr("data-src"))
-          });
+          results.push({ id: slug, title, cover });
         }
-
-        if (results.length > 0) return results;
       }
+
+      return results;
     } catch (e) {
-      // Fall through to API
+      return [];
     }
-
-    // Strategy 2: API
-    try {
-      const params = new URLSearchParams({
-        offset: offset.toString(),
-        limit: "20",
-        sort: "popular"
-      });
-      if (query && query.trim()) {
-        params.set("search", query.trim());
-        params.delete("sort");
-      }
-      if (tagId) params.set("genres", tagId);
-
-      const res = await harbor.http(`${API_BASE}/series?${params.toString()}`, {
-        responseType: "json",
-        headers: { "User-Agent": USER_AGENT }
-      });
-
-      if (res && res.ok && res.body && Array.isArray(res.body.data)) {
-        return res.body.data
-          .map((item) => ({
-            id: cleanSlug(item.slug || item.public_url || ""),
-            title: decodeHtmlEntities(item.title || "Unknown"),
-            cover: abs(item.cover || item.coverUrl)
-          }))
-          .filter((i) => i.id && i.title && !/^\d+(\.\d+)?$/.test(i.title));
-      }
-    } catch (e) {
-      // Suppress network errors
-    }
-
-    return [];
   },
 
   async detail(id) {
@@ -252,8 +204,8 @@ const plugin = {
       if (!res || !res.ok || !res.body) return null;
 
       const props =
-        extractAstroPropsFromHtml(res.body, "title", "description") ||
-        extractAstroPropsFromHtml(res.body, "title");
+        extractAstroPropsFromRawHtml(res.body, "title", "description") ||
+        extractAstroPropsFromRawHtml(res.body, "title");
 
       if (props) {
         let status = "unknown";
@@ -307,7 +259,7 @@ const plugin = {
 
       if (!res || !res.ok || !res.body) return [];
 
-      const props = extractAstroPropsFromHtml(res.body, "chapters");
+      const props = extractAstroPropsFromRawHtml(res.body, "chapters");
       const chapterList = props?.chapters || [];
 
       if (Array.isArray(chapterList) && chapterList.length > 0) {
@@ -377,7 +329,7 @@ const plugin = {
 
       if (!res || !res.ok || !res.body) return [];
 
-      const props = extractAstroPropsFromHtml(res.body, "pages");
+      const props = extractAstroPropsFromRawHtml(res.body, "pages");
       const pages = props?.pages || [];
 
       if (Array.isArray(pages) && pages.length > 0) {
@@ -417,7 +369,7 @@ const plugin = {
 
       if (!res || !res.ok || !res.body) return [];
 
-      const props = extractAstroPropsFromHtml(res.body, "availableGenres");
+      const props = extractAstroPropsFromRawHtml(res.body, "availableGenres");
       const genres = props?.availableGenres || [];
 
       return genres.map((g) => ({
