@@ -63,6 +63,15 @@
       "nsfw": false,
       "icon": "https://github.com/yuzono/tachiyomi-extensions/blob/master/src/en/asurascans/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
       "entry": "asurascans.plugin.js"
+    },
+    {
+      "id": "atsumaru",
+      "name": "Atsumaru",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": true,
+      "icon": "https://atsu.moe/favicon.ico",
+      "entry": "atsumaru.plugin.js"
     }
   ]
 }
