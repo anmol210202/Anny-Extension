@@ -43,11 +43,12 @@ const plugin = {
   id: "mangadex",
   name: "MangaDex",
 
+  // mangadex.plugin.js
   async popular(offset, tagId) {
     const limit = 20;
-    let url = `${API_BASE}/manga?order[followedCount]=desc&availableTranslatedLanguage[]=en&limit=${limit}&offset=${offset}&includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive`;
+    let url = `${API_BASE}/manga?order[followedCount]=desc&limit=${limit}&offset=${offset}&includes[]=cover_art&contentRating[]=safe&contentRating[]=suggestive`;
     if (tagId) url += `&includedTags[]=${encodeURIComponent(tagId)}`;
-
+  
     const data = await fetchJson(url);
     if (!data || !Array.isArray(data.data)) return [];
     return data.data.map(parseMangaItem).filter(Boolean);

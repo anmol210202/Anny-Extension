@@ -1,9 +1,15 @@
 const BASE = "https://weebcentral.com";
 
-async function getDoc(path) {
-  const res = await harbor.http(BASE + path, { responseType: "text" });
-  if (!res.ok) throw new Error("HTTP " + res.status + " for " + path);
-  return harbor.parseHtml(res.body);
+function cleanPath(urlOrPath) {
+  if (!urlOrPath) return "";
+  let p = urlOrPath.replace(/^https?:\/\/[^\/]+/, "");
+  return p.replace(/^\/+|\/+$/g, "");
+}
+
+function extractUlid(str) {
+  if (!str) return null;
+  const match = str.match(/([0-9A-Z]{26})/i);
+  return match ? match[1] : null;
 }
 
 function abs(url) {
@@ -14,7 +20,15 @@ function abs(url) {
   return BASE + "/" + url;
 }
 
-function getSourceImg(el) {
+async function getDoc(path) {
+  const clean = cleanPath(path);
+  const url = BASE + "/" + clean;
+  const res = await harbor.http(url, { responseType: "text" });
+  if (!res.ok) throw new Error("HTTP " + res.status + " for " + url);
+  return harbor.parseHtml(res.body);
+}
+
+function extractCover(el) {
   if (!el) return undefined;
   const source = el.querySelector("source");
   if (source) {
@@ -22,173 +36,220 @@ function getSourceImg(el) {
     if (srcset) return abs(srcset.replace("small", "normal"));
   }
   const img = el.querySelector("img");
-  if (img) return abs(img.attr("data-src") || img.attr("src"));
+  if (img) {
+    return abs(img.attr("src") || img.attr("data-src"));
+  }
   return undefined;
 }
 
-function parseCard(el) {
-  const link = el.tagName === "A" ? el : el.querySelector("a");
-  if (!link) return null;
-  const href = link.attr("href") || "";
-  
-  // Extract relative series ID (e.g., "01J76.../manga-title-slug")
-  const id = href.replace(/^https?:\/\/[^\/]+\/series\//, "").replace(/^\/series\//, "");
-  
-  const titleDivs = link.querySelectorAll("div");
-  const title = titleDivs.length > 0 
-    ? titleDivs[titleDivs.length - 1].text().trim() 
-    : link.text().trim();
+function extractTitle(aEl) {
+  if (!aEl) return "Unknown";
+  const titleAttr = aEl.attr("title");
+  if (titleAttr && titleAttr.trim()) return titleAttr.trim();
 
-  const cover = getSourceImg(link);
-
-  return { id, title, cover };
+  const divs = aEl.querySelectorAll("div");
+  for (let i = divs.length - 1; i >= 0; i--) {
+    const txt = divs[i].text().trim();
+    if (txt && !txt.match(/^(Ongoing|Complete|Hiatus|Canceled|Manga|Manhwa|Manhua|OEL)$/i)) {
+      return txt;
+    }
+  }
+  return aEl.text().trim() || "Unknown";
 }
 
-async function fetchSearch(query, offset, sort, tagId) {
-  const limit = 32;
-  const page = Math.floor(offset / limit);
-  const cleanQuery = (query || "").replace(/[!#:(),-]/g, " ").trim();
-  
-  let url = "/search/data?limit=" + limit + "&offset=" + (page * limit) + "&display_mode=Full%20Display";
-  
-  if (cleanQuery) url += "&text=" + encodeURIComponent(cleanQuery);
-  if (sort) url += "&sort=" + encodeURIComponent(sort);
-  if (tagId) url += "&included_tag=" + encodeURIComponent(tagId);
+function parseMangaCard(aEl) {
+  const href = aEl.attr("href") || "";
+  if (!href) return null;
 
-  const doc = await getDoc(url);
-  const cards = doc.querySelectorAll("article > section > a");
-  return cards.map(parseCard).filter(Boolean);
+  return {
+    id: cleanPath(href),
+    title: extractTitle(aEl),
+    cover: extractCover(aEl)
+  };
 }
 
 const plugin = {
-  id: "weeb-central",
+  id: "weebcentral",
   name: "Weeb Central",
 
   async popular(offset, tagId) {
-    return fetchSearch("", offset, "Popularity", tagId);
+    const params = new URLSearchParams({
+      limit: "32",
+      offset: offset.toString(),
+      display_mode: "Full Display",
+      sort: "Popularity"
+    });
+    if (tagId) params.append("included_tag", tagId);
+
+    const doc = await getDoc("search/data?" + params.toString());
+    return doc.querySelectorAll("article > section > a").map(parseMangaCard).filter(Boolean);
   },
 
   async search(query, offset, tagId) {
-    return fetchSearch(query, offset, "Best Match", tagId);
+    const cleanQuery = (query || "").replace(/[!#:(),-]/g, " ").trim();
+    const params = new URLSearchParams({
+      text: cleanQuery,
+      limit: "32",
+      offset: offset.toString(),
+      display_mode: "Full Display"
+    });
+    if (tagId) params.append("included_tag", tagId);
+
+    const doc = await getDoc("search/data?" + params.toString());
+    return doc.querySelectorAll("article > section > a").map(parseMangaCard).filter(Boolean);
   },
 
   async detail(id) {
-    const doc = await getDoc("/series/" + id);
-    const sections = doc.querySelectorAll("section[x-data] > section");
-    if (sections.length < 2) return null;
+    const clean = cleanPath(id);
+    const ulid = extractUlid(clean);
+    const path = ulid ? "series/" + ulid : clean;
+    const doc = await getDoc(path);
 
-    const sec0 = sections[0];
-    const sec1 = sections[1];
+    const h1 = doc.querySelector("h1");
+    const title = h1 ? h1.text().trim() : clean;
 
-    const title = sec1.querySelector("h1")?.text()?.trim() || id;
-    const cover = getSourceImg(sec0);
-
-    let author = "";
-    let status = "Unknown";
-    const metaLis = sec0.querySelectorAll("ul > li");
-
-    for (const li of metaLis) {
-      const text = li.text();
-      if (text.includes("Author")) {
-        author = li.querySelectorAll("a").map((a) => a.text().trim()).join(", ");
-      } else if (text.includes("Status")) {
-        status = li.querySelector("a")?.text()?.trim() || "Unknown";
+    let cover = extractCover(doc.querySelector("section"));
+    if (!cover || cover.includes("brand.png")) {
+      const imgs = doc.querySelectorAll("img");
+      for (const img of imgs) {
+        const src = img.attr("src") || img.attr("data-src") || "";
+        if (src.includes("/cover/")) {
+          cover = abs(src);
+          break;
+        }
       }
     }
 
+    const lis = doc.querySelectorAll("li");
+    let author = "";
+    let status = "unknown";
     let description = "";
-    const allSec1Lis = sec1.querySelectorAll("ul > li");
-    
-    for (const li of allSec1Lis) {
-      const liText = li.text();
-      if (liText.includes("Description")) {
-        const p = li.querySelector("p");
-        if (p) description += p.text().trim().replace(/NOTE:\s*/g, "\n\nNOTE: ");
-      } else if (liText.includes("Related Series")) {
-        const relLinks = li.querySelectorAll("li");
-        if (relLinks.length > 0) {
-          description += "\n\nRelated Series:";
-          relLinks.forEach((rel) => {
-            const a = rel.querySelector("a");
-            const span = rel.querySelector("span");
-            if (a) {
-              description += `\n- [${a.text().trim()}](${abs(a.attr("href"))}) ${span?.text()?.trim() || ""}`.trimEnd();
-            }
-          });
+    let altTitle = "";
+
+    for (const li of lis) {
+      const text = li.text();
+
+      if (text.includes("Author")) {
+        const links = li.querySelectorAll("a");
+        author = links.map(a => a.text().trim()).filter(Boolean).join(", ");
+      } else if (text.includes("Status")) {
+        const statusA = li.querySelector("a");
+        if (statusA) {
+          const sText = statusA.text().trim().toLowerCase();
+          if (sText.includes("ongoing")) status = "ongoing";
+          else if (sText.includes("complete")) status = "completed";
+          else if (sText.includes("hiatus")) status = "on_hiatus";
+          else if (sText.includes("cancel")) status = "cancelled";
+          else status = sText;
         }
-      } else if (liText.includes("Associated Name")) {
+      } else if (text.includes("Description")) {
+        const p = li.querySelector("p");
+        if (p) description = p.text().trim();
+      } else if (text.includes("Associated Name")) {
         const altLis = li.querySelectorAll("li");
         if (altLis.length > 0) {
-          description += "\n\nAssociated Name(s):";
-          altLis.forEach((alt) => {
-            description += `\n- ${alt.text().trim()}`;
-          });
+          altTitle = altLis.map(s => s.text().trim()).filter(Boolean).join(", ");
         }
       }
     }
 
     return {
-      id,
+      id: clean,
       title,
-      cover,
-      description: description.trim(),
+      altTitle: altTitle || undefined,
+      cover: cover || undefined,
+      description: description || undefined,
       status,
-      author,
-      lastChapter: undefined,
+      author: author || undefined
     };
   },
 
   async chapters(id) {
-    const seriesId = id.split("/")[0];
-    const doc = await getDoc("/series/" + seriesId + "/full-chapter-list");
-    const chapterLinks = doc.querySelectorAll("div[x-data] > a");
-    const totalChapters = chapterLinks.length;
+    const clean = cleanPath(id);
+    const ulid = extractUlid(clean);
+    if (!ulid) return [];
 
-    return chapterLinks
-      .map((a, index) => {
-        const href = a.attr("href") || "";
-        const chapterId = href.replace(/^\//, "");
-        const titleSpan = a.querySelector("span.flex > span");
-        const chapterName = titleSpan ? titleSpan.text().trim() : "";
-        const timeEl = a.querySelector("time[datetime]");
-        const publishAt = timeEl ? timeEl.attr("datetime") : undefined;
+    let doc = await getDoc("series/" + ulid + "/full-chapter-list");
+    let links = doc.querySelectorAll("a");
 
-        const seasonMatch = /(Season|S)\s*\d+/i.exec(chapterName);
-        const chapterNum = seasonMatch ? String(totalChapters - index) : null;
+    if (!links || links.length === 0) {
+      doc = await getDoc("series/" + ulid);
+      links = doc.querySelectorAll("a");
+    }
 
-        return {
-          id: chapterId,
-          chapter: chapterNum,
-          title: chapterName,
-          volume: null,
-          pages: 0,
-          language: "en",
-          publishAt: publishAt,
-        };
-      })
-      .filter((c) => c.id);
+    const chaptersList = [];
+    for (const a of links) {
+      const href = a.attr("href") || "";
+      if (!href.toLowerCase().includes("chapter")) continue;
+
+      let titleText = "";
+      const span = a.querySelector("span.flex > span") || a.querySelector("span");
+      if (span) {
+        titleText = span.text();
+      } else {
+        titleText = a.text();
+      }
+
+      // Remove unwanted UI elements and clean up spacing
+      titleText = titleText.replace(/Last Read/gi, "").replace(/\s+/g, " ").trim();
+      if (!titleText) continue;
+
+      const timeEl = a.querySelector("time");
+      const publishAt = timeEl ? timeEl.attr("datetime") : undefined;
+
+      const match = titleText.match(/(?:Chapter|Ch\.)\s*([\d.]+)/i) || titleText.match(/(\d+(?:\.\d+)?)/);
+      const chapterNum = match ? match[1] : null;
+
+      chaptersList.push({
+        id: cleanPath(href),
+        chapter: chapterNum,
+        title: titleText,
+        pages: 0,
+        language: "en",
+        publishAt: publishAt || undefined
+      });
+    }
+
+    return chaptersList;
   },
 
   async pageUrls(chapterId) {
-    const url = "/" + chapterId + "/images?is_prev=False&reading_style=long_strip";
-    const doc = await getDoc(url);
-    const images = doc.querySelectorAll("section[x-data] img, section img");
+    const clean = cleanPath(chapterId);
+    const ulid = extractUlid(clean);
+    const chapterPath = ulid ? "chapters/" + ulid : clean;
 
-    return images
-      .map((img) => abs(img.attr("src") || img.attr("data-src")))
-      .filter(Boolean);
+    const doc = await getDoc(chapterPath + "/images?is_prev=False&reading_style=long_strip");
+
+    const imgs = doc.querySelectorAll("img");
+    const pageUrlsList = [];
+
+    for (const img of imgs) {
+      const src = img.attr("src") || img.attr("data-src") || "";
+      if (
+        src &&
+        !src.includes("brand.png") &&
+        !src.includes("logo") &&
+        !src.includes("favicon") &&
+        !src.includes("404")
+      ) {
+        const absoluteUrl = abs(src);
+        if (absoluteUrl) pageUrlsList.push(absoluteUrl);
+      }
+    }
+
+    return pageUrlsList;
   },
 
   async tags() {
-    const genres = [
+    const tagsList = [
       "Action", "Adult", "Adventure", "Comedy", "Doujinshi", "Drama",
       "Ecchi", "Fantasy", "Gender Bender", "Harem", "Hentai", "Historical",
       "Horror", "Isekai", "Josei", "Lolicon", "Martial Arts", "Mature",
       "Mecha", "Mystery", "Psychological", "Romance", "School Life",
       "Sci-fi", "Seinen", "Shotacon", "Shoujo", "Shoujo Ai", "Shounen",
       "Shounen Ai", "Slice of Life", "Smut", "Sports", "Supernatural",
-      "Tragedy", "Yaoi", "Yuri", "Other",
+      "Tragedy", "Yaoi", "Yuri", "Other"
     ];
-    return genres.map((g) => ({ id: g, name: g, group: "Genre" }));
-  },
+    return tagsList.map(tag => ({ id: tag, name: tag, group: "Genre" }));
+  }
 };

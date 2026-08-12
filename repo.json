@@ -26,7 +26,7 @@
       "lang": "en",
       "nsfw": true,
       "icon": "https://github.com/keiyoushi/extensions-source/blob/main/src/en/weebcentral/res/mipmap-xxxhdpi/ic_launcher.png",
-      "entry": "weebcentral.plugin.js"
+      "entry": "weebcentral_mihon.plugin.js"
     },
     {
       "id": "kagane",

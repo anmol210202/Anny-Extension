@@ -3,27 +3,18 @@ const { execSync } = require("child_process");
 const { JSDOM } = require("jsdom");
 
 const USER_AGENT =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
-
-// Reads CF_COOKIE environment variable
-const CF_COOKIE = process.env.CF_COOKIE || "";
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
 global.harbor = {
   async http(url, opts = {}) {
-    const urlObj = new URL(url);
-    let mockFile = null;
-
-    if (urlObj.pathname.startsWith("/browse")) mockFile = "browse.html";
-    else if (urlObj.pathname.startsWith("/title/") && urlObj.pathname.split("/").filter(Boolean).length > 2) mockFile = "chapter.html";
-    else if (urlObj.pathname.startsWith("/title/")) mockFile = "title.html";
-
     try {
+      const urlObj = new URL(url);
       const headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://comix.to/",
-        ...(CF_COOKIE ? { "Cookie": CF_COOKIE } : {}),
+        "Referer": `${urlObj.protocol}//${urlObj.host}/`,
+        "HX-Request": "true",
         ...(opts.headers || {}),
       };
 
@@ -38,12 +29,6 @@ global.harbor = {
       const statusCode = parseInt(lines.pop(), 10);
       const body = lines.join("\n");
 
-      // Fallback to local mock files if Cloudflare blocks live execution
-      if (statusCode === 403 && mockFile && fs.existsSync(mockFile)) {
-        console.warn(`⚠️ HTTP 403 received from Cloudflare. Using local file fallback: ${mockFile}`);
-        return { ok: true, status: 200, body: fs.readFileSync(mockFile, "utf8") };
-      }
-
       let parsedBody = body;
       if (opts.responseType === "json") {
         try { parsedBody = JSON.parse(body); } catch (e) { parsedBody = null; }
@@ -55,22 +40,18 @@ global.harbor = {
         body: parsedBody,
       };
     } catch (err) {
-      if (mockFile && fs.existsSync(mockFile)) {
-        console.warn(`⚠️ Network request failed. Using local file fallback: ${mockFile}`);
-        return { ok: true, status: 200, body: fs.readFileSync(mockFile, "utf8") };
-      }
       return { ok: false, status: 500, body: err.message };
     }
   },
 
   parseHtml(htmlString) {
-    const dom = new JSDOM(htmlString);
+    const dom = new JSDOM(htmlString || "");
     const doc = dom.window.document;
 
     function wrap(el) {
       if (!el) return null;
       return {
-        text: () => el.textContent || "",
+        text: () => (el.textContent || "").trim(),
         attr: (name) => el.getAttribute(name) || "",
         querySelector: (sel) => wrap(el.querySelector(sel)),
         querySelectorAll: (sel) => Array.from(el.querySelectorAll(sel)).map(wrap),
@@ -114,65 +95,66 @@ async function runPluginTests(pluginFile) {
   }
 
   // 2. Popular
-  let popularItem = null;
+  let popularItems = [];
   try {
     console.log("\n--- 2. Testing popular(0) ---");
-    const popular = await plugin.popular(0);
-    console.log(`✅ Fetched ${popular?.length || 0} titles.`);
-    if (popular?.length > 0) {
-      console.log("Sample:", popular.slice(0, 2));
-      popularItem = popular[0];
-    }
+    popularItems = await plugin.popular(0);
+    console.log(`✅ Fetched ${popularItems?.length || 0} titles.`);
+    if (popularItems?.length > 0) console.log("Sample:", popularItems.slice(0, 2));
   } catch (err) {
     console.error("❌ Error in popular():", err.message);
   }
 
   // 3. Search
+  let searchItems = [];
   try {
     console.log("\n--- 3. Testing search('jujutsu', 0) ---");
-    const searchResults = await plugin.search("jujutsu", 0);
-    console.log(`✅ Fetched ${searchResults?.length || 0} search results.`);
-    if (searchResults?.length > 0) {
-      console.log("Sample:", searchResults.slice(0, 2));
-    }
+    searchItems = await plugin.search("jujutsu", 0);
+    console.log(`✅ Fetched ${searchItems?.length || 0} search results.`);
+    if (searchItems?.length > 0) console.log("Sample:", searchItems.slice(0, 2));
   } catch (err) {
     console.error("❌ Error in search():", err.message);
   }
 
-  // 4. Detail
-  const testId = popularItem?.id || "7nzg-jujutsu-kaisen";
-  try {
-    console.log(`\n--- 4. Testing detail('${testId}') ---`);
-    const detail = await plugin.detail(testId);
-    console.log("✅ Detail Result:", detail);
-  } catch (err) {
-    console.error("❌ Error in detail():", err.message);
+  // Combine items to test detail, chapters, and pageUrls
+  const testCandidates = [...searchItems, ...popularItems];
+  if (testCandidates.length === 0) {
+    console.warn("⚠️ Skipping detail/chapters: No items available to test.");
+    return;
   }
 
-  // 5. Chapters
-  let chapterItem = null;
-  try {
-    console.log(`\n--- 5. Testing chapters('${testId}') ---`);
-    const chapters = await plugin.chapters(testId);
-    console.log(`✅ Fetched ${chapters?.length || 0} chapters.`);
-    if (chapters?.length > 0) {
-      console.log("First chapter:", chapters[0]);
-      console.log("Last chapter:", chapters[chapters.length - 1]);
-      chapterItem = chapters[0];
+  let selectedChapter = null;
+  for (const item of testCandidates) {
+    try {
+      console.log(`\n--- 4. Testing detail('${item.id}') ---`);
+      const detail = await plugin.detail(item.id);
+      console.log("✅ Detail Result:", detail);
+
+      console.log(`\n--- 5. Testing chapters('${item.id}') ---`);
+      const chapters = await plugin.chapters(item.id);
+      console.log(`✅ Fetched ${chapters?.length || 0} chapters for "${item.title}".`);
+
+      if (chapters?.length > 0) {
+        console.log("First chapter:", chapters[0]);
+        selectedChapter = chapters[0];
+        break; // Stop loop once chapters are found
+      }
+    } catch (err) {
+      console.error(`❌ Error testing candidate '${item.id}':`, err.message);
     }
-  } catch (err) {
-    console.error("❌ Error in chapters():", err.message);
   }
 
   // 6. Page URLs
-  const chapterId = chapterItem?.id || "7nzg-jujutsu-kaisen/6603843-chapter-267";
+  if (!selectedChapter?.id) {
+    console.warn("⚠️ Skipping pageUrls: No valid chapter found across test candidates.");
+    return;
+  }
+
   try {
-    console.log(`\n--- 6. Testing pageUrls('${chapterId}') ---`);
-    const pages = await plugin.pageUrls(chapterId);
+    console.log(`\n--- 6. Testing pageUrls('${selectedChapter.id}') ---`);
+    const pages = await plugin.pageUrls(selectedChapter.id);
     console.log(`✅ Fetched ${pages?.length || 0} page URLs.`);
-    if (pages?.length > 0) {
-      console.log("Sample pages:", pages.slice(0, 3));
-    }
+    if (pages?.length > 0) console.log("Sample pages:", pages.slice(0, 3));
   } catch (err) {
     console.error("❌ Error in pageUrls():", err.message);
   }
