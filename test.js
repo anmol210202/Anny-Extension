@@ -4,6 +4,7 @@ const { spawnSync } = require("child_process");
 const { JSDOM, VirtualConsole } = require("jsdom");
 
 const USER_AGENT =
+  process.env.USER_AGENT ||
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
 const virtualConsole = new VirtualConsole();
@@ -37,8 +38,14 @@ global.harbor = {
     const startTime = Date.now();
     try {
       const FORBIDDEN_HEADERS = [
-        "host", "cookie", "authorization", "origin", "referer", "content-length", "connection"
+        "host", "authorization", "origin", "referer", "content-length", "connection"
       ];
+
+      // Allow passing optional local test cookies via COOKIE env var
+      if (!opts.headers) opts.headers = {};
+      if (process.env.COOKIE && !opts.headers["Cookie"] && !opts.headers["cookie"]) {
+        opts.headers["Cookie"] = process.env.COOKIE;
+      }
 
       const rawHeaders = opts.headers || {};
       const cleanHeaders = { "User-Agent": USER_AGENT };
@@ -88,13 +95,22 @@ global.harbor = {
         console.error(`     Response Snippet: "${snippet}"`);
       }
 
+      // Check for backend error messages inside body
+      if (rawBody.includes('"message":') || rawBody.includes('"error":')) {
+        try {
+          const parsedErr = JSON.parse(rawBody);
+          if (parsedErr.message || parsedErr.error) {
+            console.error(`  ⚠️ API MESSAGE DETECTED: "${parsedErr.message || parsedErr.error}"`);
+          }
+        } catch (e) {}
+      }
+
       if (opts.responseType === "json") {
         if (statusCode < 200 || statusCode >= 300 || !rawBody) return null;
         try {
           return JSON.parse(rawBody);
         } catch (e) {
           console.error(`  ❌ JSON PARSE ERROR [${url}]: Failed to parse body as JSON.`);
-          console.error(`     Raw Snippet: "${rawBody.substring(0, 150)}..."`);
           return null;
         }
       }
@@ -161,6 +177,17 @@ function verifyManifestMatch(plugin) {
   } catch (e) {}
 }
 
+async function testCoverUrl(coverUrl, label) {
+  if (!coverUrl) return;
+  console.log(`\n  🖼️ Testing ${label} Cover Image Fetch: "${coverUrl}"`);
+  const res = await global.harbor.http(coverUrl, { responseType: "text" });
+  if (res && res.ok) {
+    console.log(`  ✅ Cover Image Fetch Successful (200 OK)`);
+  } else {
+    console.error(`  ❌ Cover Image Fetch Failed! Harbor will fail to render this poster.`);
+  }
+}
+
 async function runPluginTests(pluginFile) {
   console.log(`\n========================================`);
   console.log(`🚀 DIAGNOSTIC TEST RUNNER: ${pluginFile}`);
@@ -183,10 +210,6 @@ async function runPluginTests(pluginFile) {
       console.log(`✅ Fetched ${tags?.length || 0} tags.`);
       if (tags?.length > 0) {
         console.log("Sample:", tags.slice(0, 3));
-        const invalidTags = tags.filter((t) => !t.id || !t.name);
-        if (invalidTags.length > 0) {
-          console.warn(`  ⚠️ HARBOR SANITIZATION WARNING: ${invalidTags.length} tags missing 'id' or 'name'.`);
-        }
       }
     }
   } catch (err) {
@@ -201,15 +224,7 @@ async function runPluginTests(pluginFile) {
     console.log(`✅ Fetched ${popularItems?.length || 0} popular titles.`);
     if (popularItems?.length > 0) {
       console.log("Top 3 Popular Titles:", popularItems.slice(0, 3).map((i) => i.title));
-
-      const invalidCovers = popularItems.filter((i) => i.cover && !/^https?:\/\//i.test(i.cover));
-      if (invalidCovers.length > 0) {
-        console.warn(`  ⚠️ HARBOR SANITIZATION WARNING: ${invalidCovers.length} relative covers will be dropped!`);
-      }
-      const invalidSummaries = popularItems.filter((i) => !i.id || !i.title);
-      if (invalidSummaries.length > 0) {
-        console.warn(`  ⚠️ HARBOR SANITIZATION WARNING: ${invalidSummaries.length} items missing 'id' or 'title'!`);
-      }
+      await testCoverUrl(popularItems[0].cover, "Popular Title");
     }
   } catch (err) {
     console.error("❌ Error in popular():", err);
@@ -252,16 +267,13 @@ async function runPluginTests(pluginFile) {
         coverValid: /^https?:\/\//.test(detail.cover || "")
       });
 
+      await testCoverUrl(detail.cover, "Detail Page");
+
       console.log(`\n--- 5. Testing chapters('${item.id}') ---`);
       const chapters = await plugin.chapters(item.id);
       console.log(`✅ Fetched ${chapters?.length || 0} chapters for "${item.title}".`);
 
       if (chapters?.length > 0) {
-        const missingIds = chapters.filter((c) => !c.id);
-        if (missingIds.length > 0) {
-          console.warn(`  ⚠️ HARBOR SANITIZATION WARNING: ${missingIds.length} chapters missing 'id'!`);
-        }
-
         console.log("📊 Chapter Sequence Check:");
         console.log("  - First Chapter [Index 0]:", chapters[0].title, `(Ch: ${chapters[0].chapter})`);
         console.log("  - Last Chapter [Index N]:", chapters[chapters.length - 1].title, `(Ch: ${chapters[chapters.length - 1].chapter})`);

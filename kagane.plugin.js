@@ -50,9 +50,9 @@ async function getIntegrityToken() {
   }
 }
 
-async function getChallengeResponse(chapterId) {
+async function getChallengeResponse(bookId) {
   const token = await getIntegrityToken();
-  const url = `${API_BASE}/books/${chapterId}?is_datasaver=false`;
+  const url = `${API_BASE}/books/${bookId}?is_datasaver=false`;
 
   const headers = {};
   if (token) {
@@ -73,7 +73,7 @@ function parseMangaCard(item) {
   return {
     id: String(item.series_id),
     title: (item.title || "Unknown").trim(),
-    cover: coverId ? `${API_BASE}/image/${coverId}` : undefined
+    cover: coverId ? abs(`${API_BASE}/image/${coverId}`) : undefined
   };
 }
 
@@ -201,12 +201,15 @@ const plugin = {
         group: groupNames,
         pages: book.page_count || 0,
         language: "en",
-        publishAt: book.created_at || undefined
+        publishAt: book.created_at || undefined,
+        _num: typeof book.sort_no === "number" ? book.sort_no : parseFloat(numStr) || 0
       };
     });
 
-    // Reverses list so Chapter 1 is at index 0 and latest chapter is at the end
-    return parsedChapters.reverse();
+    // Sort chapters in ascending order (Chapter 1 -> Latest Chapter)
+    parsedChapters.sort((a, b) => a._num - b._num);
+
+    return parsedChapters.map(({ _num, ...rest }) => rest);
   },
 
   async pageUrls(chapterId) {
@@ -225,7 +228,7 @@ const plugin = {
     return pages
       .map((p) => {
         const ext = p.ext || "jxl";
-        return `${cacheUrl}/api/v2/books/page/${bookId}/${p.page_id}.${ext}?token=${accessToken}`;
+        return abs(`${cacheUrl}/api/v2/books/page/${bookId}/${p.page_id}.${ext}?token=${accessToken}`);
       })
       .filter(Boolean);
   },
