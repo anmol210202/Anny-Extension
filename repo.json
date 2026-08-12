@@ -54,6 +54,15 @@
       "nsfw": true,
       "icon": "https://mangadex.org/favicon.ico",
       "entry": "mangadex.plugin.js"
+    },
+    {
+      "id": "asurascans",
+      "name": "Asura Scans",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": false,
+      "icon": "https://github.com/yuzono/tachiyomi-extensions/blob/master/src/en/asurascans/res/mipmap-xxxhdpi/ic_launcher.png?raw=true",
+      "entry": "asurascans.plugin.js"
     }
   ]
 }

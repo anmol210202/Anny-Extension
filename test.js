@@ -1,11 +1,19 @@
 const fs = require("fs");
 const { execSync } = require("child_process");
-const { JSDOM } = require("jsdom");
+const { JSDOM, VirtualConsole } = require("jsdom");
 
 const USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
+// Suppress JSDOM CSS parsing warnings
+const virtualConsole = new VirtualConsole();
+virtualConsole.on("error", () => {});
+
 global.harbor = {
+  register(provider) {
+    global.plugin = provider;
+  },
+
   async http(url, opts = {}) {
     try {
       const urlObj = new URL(url);
@@ -45,7 +53,7 @@ global.harbor = {
   },
 
   parseHtml(htmlString) {
-    const dom = new JSDOM(htmlString || "");
+    const dom = new JSDOM(htmlString || "", { virtualConsole });
     const doc = dom.window.document;
 
     function wrap(el) {
@@ -105,11 +113,17 @@ async function runPluginTests(pluginFile) {
     console.error("❌ Error in popular():", err.message);
   }
 
-  // 3. Search Test
+  // 3. Search Test (uses title from popular, fallback to "jujutsu")
   let searchItems = [];
   try {
-    console.log("\n--- 3. Testing search('jujutsu', 0) ---");
-    searchItems = await plugin.search("jujutsu", 0);
+    let searchQuery = "jujutsu";
+    if (popularItems?.length > 0 && popularItems[0].title) {
+      const extractedWord = popularItems[0].title.split(" ")[0].replace(/[^a-zA-Z0-9]/g, "").trim();
+      if (extractedWord) searchQuery = extractedWord;
+    }
+
+    console.log(`\n--- 3. Testing search('${searchQuery}', 0) ---`);
+    searchItems = await plugin.search(searchQuery, 0);
     console.log(`✅ Fetched ${searchItems?.length || 0} search results.`);
     if (searchItems?.length > 0) console.log("Search Results:", searchItems.map(i => i.title));
   } catch (err) {
