@@ -93,7 +93,8 @@ const plugin = {
       limit: "32",
       offset: offset.toString(),
       display_mode: "Full Display",
-      sort: "Best Match",
+      // sort: "Best Match",
+      sort: "Popularity",
       order: "Descending"
     });
     if (tagId) params.append("included_tag", tagId);

@@ -1,4 +1,6 @@
 const BASE = "https://mangadot.net";
+const USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
 function abs(url) {
   if (!url) return undefined;
@@ -43,12 +45,30 @@ function decodeRsc(flat) {
   return resolve(0);
 }
 
-async function getRscData(path, routeKey) {
-  const url = BASE + (path.startsWith("/") ? path : "/" + path);
-  const res = await harbor.http(url, { responseType: "json" });
+// Safely fetch as text and parse JSON to handle text/plain RSC streams
+async function requestJson(url) {
+  const res = await harbor.http(url, {
+    responseType: "text",
+    headers: {
+      "User-Agent": USER_AGENT,
+      "Accept": "application/json, text/plain, */*"
+    }
+  });
+
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} for ${url}`);
 
-  const decoded = decodeRsc(res.body);
+  try {
+    return typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+  } catch (e) {
+    throw new Error(`Failed to parse JSON for ${url}`);
+  }
+}
+
+async function getRscData(path, routeKey) {
+  const url = BASE + (path.startsWith("/") ? path : "/" + path);
+  const rawData = await requestJson(url);
+  const decoded = decodeRsc(rawData);
+
   if (!decoded) throw new Error(`Failed to decode RSC data for ${url}`);
 
   if (routeKey) {
@@ -169,11 +189,11 @@ const plugin = {
 
   async chapters(id) {
     const url = `${BASE}/api/manga/${id}/chapters/list?lang=en`;
-    const res = await harbor.http(url, { responseType: "json" });
+    const resList = await requestJson(url);
 
-    if (!res.ok || !Array.isArray(res.body)) return [];
+    if (!Array.isArray(resList)) return [];
 
-    return res.body
+    return resList
       .filter(ch => !ch.language || ch.language === "en")
       .map(ch => {
         const numStr = ch.chapter_number !== undefined && ch.chapter_number !== null 
@@ -205,10 +225,10 @@ const plugin = {
     const segment = source === "user" ? "uploads" : "chapters";
     const url = `${BASE}/api/${segment}/${chId}/images`;
 
-    const res = await harbor.http(url, { responseType: "json" });
-    if (!res.ok || !res.body || !Array.isArray(res.body.images)) return [];
+    const resObj = await requestJson(url);
+    if (!resObj || !Array.isArray(resObj.images)) return [];
 
-    return res.body.images
+    return resObj.images
       .map(img => abs(img.url))
       .filter(Boolean);
   },
@@ -218,22 +238,9 @@ const plugin = {
       const routeData = await getRscData("/search.data?page=1&_routes=pages/SearchPage", "pages/SearchPage");
       const searchData = routeData?.data || routeData;
       const genres = searchData?.allGenres || searchData?.all_genres || [];
-      const tags = searchData?.allTags || searchData?.all_tags || [];
 
-      const genreItems = genres.map(g => ({ id: g, name: g, group: "Genre" }));
-      const tagItems = [];
-
-      if (Array.isArray(tags)) {
-        for (const cat of tags) {
-          if (Array.isArray(cat.tags)) {
-            for (const t of cat.tags) {
-              if (t.name) tagItems.push({ id: t.name, name: t.name, group: cat.category || "Tag" });
-            }
-          }
-        }
-      }
-
-      return [...genreItems, ...tagItems];
+      // Capped at 500 tags to comply with Harbor's strict 1000-item limit
+      return genres.slice(0, 500).map(g => ({ id: g, name: g, group: "Genre" }));
     } catch (e) {
       return [];
     }
