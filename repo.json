@@ -7,7 +7,7 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": false,
-      "icon": "https://weebcentral.com/static/images/brand.png",
+      "icon": "https://github.com/keiyoushi/extensions-source/blob/main/src/en/weebcentral/res/mipmap-xxxhdpi/ic_launcher.png",
       "entry": "weebcentral.plugin.js"
     },
     {
@@ -18,15 +18,6 @@
       "nsfw": false,
       "icon": "https://comix.to/favicon.ico",
       "entry": "comix.plugin.js"
-    },
-    {
-      "id": "weeb-central-V2",
-      "name": "Weeb Central V2",
-      "version": "1.0.0",
-      "lang": "en",
-      "nsfw": true,
-      "icon": "https://github.com/keiyoushi/extensions-source/blob/main/src/en/weebcentral/res/mipmap-xxxhdpi/ic_launcher.png",
-      "entry": "weebcentral_mihon.plugin.js"
     },
     {
       "id": "kagane",
@@ -81,6 +72,15 @@
       "nsfw": false,
       "icon": "https://mangafire.to/favicon.ico",
       "entry": "mangafire.plugin.js"
+    },
+    {
+      "id": "readcomicsonline",
+      "name": "Read Comics Online",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": false,
+      "icon": "https://readcomicsonline.ru/favicon.ico",
+      "entry": "readcomicsonline.plugin.js"
     }
   ]
 }
