@@ -1,5 +1,5 @@
 const fs = require("fs");
-const fetch = require("node-fetch");
+const { execSync } = require("child_process");
 const { JSDOM } = require("jsdom");
 
 const USER_AGENT =
@@ -7,20 +7,50 @@ const USER_AGENT =
 
 global.harbor = {
   async http(url, opts = {}) {
-    const headers = {
-      "User-Agent": USER_AGENT,
-      ...(opts.headers || {}),
-    };
+    try {
+      // Use system curl to bypass Node.js TLS fingerprinting blocked by Cloudflare
+      const headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://comix.to/",
+        ...(opts.headers || {}),
+      };
 
-    const res = await fetch(url, { ...opts, headers });
-    const body = await res.text();
+      const headerFlags = Object.entries(headers)
+        .map(([k, v]) => `-H ${JSON.stringify(`${k}: ${v}`)}`)
+        .join(" ");
 
-    return {
-      ok: res.ok,
-      status: res.status,
-      body: opts.responseType === "json" ? JSON.parse(body) : body,
-    };
+      const cmd = `curl -sL -w "\n%{http_code}" ${headerFlags} ${JSON.stringify(url)}`;
+      const output = execSync(cmd, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
+
+      const lines = output.trim().split("\n");
+      const statusCode = parseInt(lines.pop(), 10);
+      const body = lines.join("\n");
+
+      let parsedBody = body;
+      if (opts.responseType === "json") {
+        try {
+          parsedBody = JSON.parse(body);
+        } catch (e) {
+          parsedBody = null;
+        }
+      }
+
+      return {
+        ok: statusCode >= 200 && statusCode < 300,
+        status: statusCode,
+        body: parsedBody,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        status: 500,
+        body: err.message,
+      };
+    }
   },
+
   parseHtml(htmlString) {
     const dom = new JSDOM(htmlString);
     const doc = dom.window.document;
@@ -38,38 +68,126 @@ global.harbor = {
   },
 };
 
-let code = fs.readFileSync("./weebcentral.plugin.js", "utf8");
-code = code.replace(/const\s+plugin\s*=/, "global.plugin =");
-eval(code);
+function loadPlugin(pluginFile) {
+  delete global.plugin;
+  let code = fs.readFileSync(pluginFile, "utf8");
+  code = code.replace(/const\s+plugin\s*=/, "global.plugin =");
+  eval(code);
+  return global.plugin;
+}
 
-(async () => {
-  console.log("\n=== 1. TESTING TAGS ===");
-  const tags = await plugin.tags();
-  console.log(`Fetched ${tags.length} tags:`);
-  console.dir(tags.slice(0, 10), { depth: null });
+async function runPluginTests(pluginFile) {
+  console.log(`\n========================================`);
+  console.log(`🚀 TESTING PLUGIN: ${pluginFile}`);
+  console.log(`========================================`);
 
-  console.log("\n=== 2. TESTING POPULAR ===");
-  const popular = await plugin.popular(0);
-  console.log(`Fetched ${popular.length} manga:`);
-  console.log(popular.slice(0, 3));
+  if (!fs.existsSync(pluginFile)) {
+    console.error(`❌ File not found: ${pluginFile}`);
+    return;
+  }
 
-  if (popular.length > 0) {
-    const testId = popular[0].id;
+  const plugin = loadPlugin(pluginFile);
+  console.log(`Loaded plugin ID: "${plugin.id}" | Name: "${plugin.name}"`);
 
-    console.log(`\n=== 3. TESTING DETAIL (${testId}) ===`);
+  // 1. Tags
+  try {
+    console.log("\n--- 1. Testing tags() ---");
+    if (typeof plugin.tags === "function") {
+      const tags = await plugin.tags();
+      console.log(`✅ Fetched ${tags?.length || 0} tags.`);
+      if (tags?.length > 0) console.log("Sample:", tags.slice(0, 3));
+    } else {
+      console.log("ℹ️ Optional tags() method not implemented.");
+    }
+  } catch (err) {
+    console.error("❌ Error in tags():", err.message);
+  }
+
+  // 2. Popular
+  let popularItem = null;
+  try {
+    console.log("\n--- 2. Testing popular(0) ---");
+    const popular = await plugin.popular(0);
+    console.log(`✅ Fetched ${popular?.length || 0} titles.`);
+    if (popular?.length > 0) {
+      console.log("Sample:", popular.slice(0, 2));
+      popularItem = popular[0];
+    }
+  } catch (err) {
+    console.error("❌ Error in popular():", err.message);
+  }
+
+  // 3. Search
+  try {
+    console.log("\n--- 3. Testing search('jujutsu', 0) ---");
+    const searchResults = await plugin.search("jujutsu", 0);
+    console.log(`✅ Fetched ${searchResults?.length || 0} search results.`);
+    if (searchResults?.length > 0) {
+      console.log("Sample:", searchResults.slice(0, 2));
+    }
+  } catch (err) {
+    console.error("❌ Error in search():", err.message);
+  }
+
+  // 4. Detail
+  const testId = popularItem?.id;
+  if (!testId) {
+    console.log("⚠️ Skipping detail/chapters/pages tests (no title ID retrieved from popular).");
+    return;
+  }
+
+  try {
+    console.log(`\n--- 4. Testing detail('${testId}') ---`);
     const detail = await plugin.detail(testId);
-    console.log(detail);
+    console.log("✅ Detail Result:", detail);
+  } catch (err) {
+    console.error("❌ Error in detail():", err.message);
+  }
 
-    console.log(`\n=== 4. TESTING CHAPTERS (${testId}) ===`);
+  // 5. Chapters
+  let chapterItem = null;
+  try {
+    console.log(`\n--- 5. Testing chapters('${testId}') ---`);
     const chapters = await plugin.chapters(testId);
-    console.log(`Fetched ${chapters.length} chapters. First & Last:`);
-    console.log([chapters[0], chapters[chapters.length - 1]]);
+    console.log(`✅ Fetched ${chapters?.length || 0} chapters.`);
+    if (chapters?.length > 0) {
+      console.log("First chapter:", chapters[0]);
+      console.log("Last chapter:", chapters[chapters.length - 1]);
+      chapterItem = chapters[0];
+    }
+  } catch (err) {
+    console.error("❌ Error in chapters():", err.message);
+  }
 
-    if (chapters.length > 0) {
-      const chapterId = chapters[0].id;
-      console.log(`\n=== 5. TESTING PAGE URLS (${chapterId}) ===`);
-      const pages = await plugin.pageUrls(chapterId);
-      console.log(`Fetched ${pages.length} pages. Sample:`, pages.slice(0, 3));
+  // 6. Page URLs
+  if (chapterItem?.id) {
+    try {
+      console.log(`\n--- 6. Testing pageUrls('${chapterItem.id}') ---`);
+      const pages = await plugin.pageUrls(chapterItem.id);
+      console.log(`✅ Fetched ${pages?.length || 0} page URLs.`);
+      if (pages?.length > 0) {
+        console.log("Sample pages:", pages.slice(0, 3));
+      } else {
+        console.warn("⚠️ Warning: 0 page URLs returned!");
+      }
+    } catch (err) {
+      console.error("❌ Error in pageUrls():", err.message);
     }
   }
-})().catch(console.error);
+}
+
+(async () => {
+  const targetArg = process.argv[2];
+
+  if (targetArg) {
+    const file = targetArg.endsWith(".plugin.js") ? targetArg : `${targetArg}.plugin.js`;
+    await runPluginTests(`./${file}`);
+  } else if (fs.existsSync("./repo.json")) {
+    const repo = JSON.parse(fs.readFileSync("./repo.json", "utf8"));
+    for (const p of repo.plugins) {
+      await runPluginTests(`./${p.entry}`);
+    }
+  } else {
+    console.log("Usage: node test.js [plugin_name]");
+  }
+})();

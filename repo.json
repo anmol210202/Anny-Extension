@@ -9,6 +9,15 @@
       "nsfw": false,
       "icon": "https://weebcentral.com/static/images/brand.png",
       "entry": "weebcentral.plugin.js"
+    },
+    {
+      "id": "comix-source",
+      "name": "Comix",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": false,
+      "icon": "https://comix.to/favicon.ico",
+      "entry": "comix.plugin.js"
     }
   ]
 }
