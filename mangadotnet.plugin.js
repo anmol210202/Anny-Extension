@@ -2,6 +2,25 @@ const BASE = "https://mangadot.net";
 const USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
+// Scanlator priority list from Kotlin configuration
+const PRIORITY_PATTERNS = [
+  "viz media",
+  "manga plus",
+  "mangaplus",
+  "official",
+  "webtoon",
+  "tapas",
+  "mangadex",
+  "k manga",
+  "kmanga",
+  "mangaup",
+  "manga up",
+  "comikey",
+  "shonen jump",
+  "shounen jump",
+  "shonenjump"
+];
+
 function abs(url) {
   if (!url) return undefined;
   if (/^https?:\/\//i.test(url)) return url;
@@ -45,7 +64,6 @@ function decodeRsc(flat) {
   return resolve(0);
 }
 
-// Safely fetch as text and parse JSON to handle text/plain RSC streams
 async function requestJson(url) {
   const res = await harbor.http(url, {
     responseType: "text",
@@ -100,6 +118,46 @@ function parseMangaCard(manga) {
     title: manga.title || "Unknown",
     cover: abs(manga.photo)
   };
+}
+
+// Group chapters by number and select the best scanlator according to priority
+function deduplicateChapters(chaptersList) {
+  const grouped = new Map();
+
+  for (const ch of chaptersList) {
+    const key = ch.chapter;
+    if (!grouped.has(key)) {
+      grouped.set(key, []);
+    }
+    grouped.get(key).push(ch);
+  }
+
+  const result = [];
+
+  for (const [chNum, group] of grouped.entries()) {
+    if (group.length === 1 || chNum === "0" || !chNum) {
+      result.push(...group);
+      continue;
+    }
+
+    let selected = null;
+
+    for (const pattern of PRIORITY_PATTERNS) {
+      selected = group.find((ch) => {
+        const scanlator = (ch.group || "").toLowerCase();
+        return scanlator.includes(pattern);
+      });
+      if (selected) break;
+    }
+
+    if (!selected) {
+      selected = group[0];
+    }
+
+    result.push(selected);
+  }
+
+  return result;
 }
 
 const plugin = {
@@ -193,12 +251,13 @@ const plugin = {
 
     if (!Array.isArray(resList)) return [];
 
-    return resList
-      .filter(ch => !ch.language || ch.language === "en")
-      .map(ch => {
-        const numStr = ch.chapter_number !== undefined && ch.chapter_number !== null 
-          ? String(ch.chapter_number).replace(/\.0$/, "") 
-          : "0";
+    const rawChapters = resList
+      .filter((ch) => !ch.language || ch.language === "en")
+      .map((ch) => {
+        const numStr =
+          ch.chapter_number !== undefined && ch.chapter_number !== null
+            ? String(ch.chapter_number).replace(/\.0$/, "")
+            : "0";
 
         let name = ch.chapter_title ? ch.chapter_title.trim() : "";
         let fullTitle = name;
@@ -206,16 +265,23 @@ const plugin = {
           fullTitle = `Chapter ${numStr}${name ? ": " + name : ""}`;
         }
 
+        const groupName = (ch.group_name || ch.scanlator || ch.group || "").trim();
+        if (groupName) {
+          fullTitle += ` [${groupName}]`;
+        }
+
         return {
           id: `${ch.id}:${ch.source || "user"}`,
           chapter: numStr,
           title: fullTitle,
-          scanlator: ch.group_name || ch.scanlator || ch.group || undefined,
+          group: groupName || undefined,
           pages: ch.page_count || 0,
           language: "en",
           publishAt: ch.date_added || undefined
         };
       });
+
+    return deduplicateChapters(rawChapters);
   },
 
   async pageUrls(chapterId) {
@@ -228,9 +294,7 @@ const plugin = {
     const resObj = await requestJson(url);
     if (!resObj || !Array.isArray(resObj.images)) return [];
 
-    return resObj.images
-      .map(img => abs(img.url))
-      .filter(Boolean);
+    return resObj.images.map((img) => abs(img.url)).filter(Boolean);
   },
 
   async tags() {
@@ -239,8 +303,7 @@ const plugin = {
       const searchData = routeData?.data || routeData;
       const genres = searchData?.allGenres || searchData?.all_genres || [];
 
-      // Capped at 500 tags to comply with Harbor's strict 1000-item limit
-      return genres.slice(0, 500).map(g => ({ id: g, name: g, group: "Genre" }));
+      return genres.slice(0, 500).map((g) => ({ id: g, name: g, group: "Genre" }));
     } catch (e) {
       return [];
     }
