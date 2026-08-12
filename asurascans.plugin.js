@@ -75,6 +75,19 @@ function extractAstroPropsFromRawHtml(html, ...requiredKeys) {
   return null;
 }
 
+async function requestJson(url) {
+  try {
+    const res = await harbor.http(url, {
+      responseType: "text",
+      headers: { "User-Agent": USER_AGENT }
+    });
+    if (!res || !res.ok || !res.body) return null;
+    return typeof res.body === "string" ? JSON.parse(res.body) : res.body;
+  } catch (e) {
+    return null;
+  }
+}
+
 const plugin = {
   id: "asurascans",
   name: "Asura Scans",
@@ -84,7 +97,7 @@ const plugin = {
   },
 
   async search(query, offset, tagId) {
-    // 1. Primary Strategy: Asura REST API
+    // 1. Asura REST API
     try {
       const params = new URLSearchParams({
         offset: offset.toString(),
@@ -100,14 +113,10 @@ const plugin = {
         params.set("genres", tagId);
       }
 
-      const apiUrl = `${API_BASE}/series?${params.toString()}`;
-      const res = await harbor.http(apiUrl, {
-        responseType: "json",
-        headers: { "User-Agent": USER_AGENT }
-      });
+      const resObj = await requestJson(`${API_BASE}/series?${params.toString()}`);
 
-      if (res && res.ok && res.body && Array.isArray(res.body.data)) {
-        const items = res.body.data
+      if (resObj && Array.isArray(resObj.data)) {
+        const items = resObj.data
           .map((item) => {
             const slug = cleanSlug(item.slug || item.public_url || "");
             const title = decodeHtmlEntities(item.title || "");
@@ -122,10 +131,10 @@ const plugin = {
         if (items.length > 0) return items;
       }
     } catch (e) {
-      // Fall through to HTML scraping if API fails
+      // Fallback to HTML
     }
 
-    // 2. Secondary Strategy: Web Scraping /browse
+    // 2. HTML /browse Fallback
     try {
       const page = Math.floor(offset / 20) + 1;
       const browseUrl = `${BASE}/browse?page=${page}${
@@ -358,7 +367,6 @@ const plugin = {
     }
   },
 
-  // Static tags list to prevent network calls and timeouts during Harbor startup
   async tags() {
     const genreList = [
       { id: "action", name: "Action" },

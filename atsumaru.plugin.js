@@ -4,18 +4,27 @@ const USER_AGENT =
 
 function absImage(imgPath) {
   if (!imgPath) return undefined;
-  let str = typeof imgPath === "string" ? imgPath : imgPath.image || imgPath.poster || "";
+  let str = "";
+  if (typeof imgPath === "string") {
+    str = imgPath;
+  } else if (typeof imgPath === "object" && imgPath !== null) {
+    str = imgPath.image || imgPath.poster || imgPath.url || "";
+  }
   if (!str) return undefined;
   if (/^https?:\/\//i.test(str)) return str;
   if (str.startsWith("//")) return "https:" + str;
-  const clean = str.replace(/^\/+/, "").replace(/^static\//, "");
+
+  let clean = str.replace(/^\/+/, "");
+  if (clean.startsWith("static/")) {
+    clean = clean.substring(7);
+  }
   return `${BASE}/static/${clean}`;
 }
 
 async function requestJson(url) {
   try {
     const res = await harbor.http(url, {
-      responseType: "json",
+      responseType: "text",
       headers: {
         "User-Agent": USER_AGENT,
         "Accept": "*/*",
@@ -23,7 +32,7 @@ async function requestJson(url) {
       }
     });
     if (!res || !res.ok || !res.body) return null;
-    return res.body;
+    return typeof res.body === "string" ? JSON.parse(res.body) : res.body;
   } catch (e) {
     return null;
   }
@@ -53,7 +62,6 @@ const plugin = {
     const cleanQuery = (query || "").trim();
     const page = Math.floor(offset / 40) + 1;
 
-    // Use trending API endpoint for empty queries without tags
     if (!cleanQuery && !tagId) {
       const data = await requestJson(
         `${BASE}/api/infinite/trending?page=${page - 1}&types=Manga,Manwha,Manhua,OEL`
@@ -64,7 +72,6 @@ const plugin = {
       }
     }
 
-    // Search collection API query
     let filterQuery =
       "hidden:!=true && (mbContentRating:=[`Safe`,`Suggestive`,`Erotica`] || mbContentRating:!=*) && views:>0";
     if (tagId) {
@@ -151,10 +158,8 @@ const plugin = {
   },
 
   async chapters(id) {
-    const [detailData, chaptersData] = await Promise.all([
-      requestJson(`${BASE}/api/manga/page?id=${id}`),
-      requestJson(`${BASE}/api/manga/allChapters?mangaId=${id}`)
-    ]);
+    const detailData = await requestJson(`${BASE}/api/manga/page?id=${id}`);
+    const chaptersData = await requestJson(`${BASE}/api/manga/allChapters?mangaId=${id}`);
 
     const scanlatorMap = new Map();
     if (detailData?.mangaPage?.scanlators && Array.isArray(detailData.mangaPage.scanlators)) {
@@ -191,7 +196,6 @@ const plugin = {
       };
     });
 
-    // Sort chapters in ascending order (Chapter 1 -> Latest)
     parsedChapters.sort((a, b) => a._num - b._num);
 
     return parsedChapters.map(({ _num, ...rest }) => rest);
@@ -212,7 +216,6 @@ const plugin = {
     return pages.map((p) => absImage(p.image)).filter(Boolean);
   },
 
-  // Static tags list to prevent extra network calls during startup
   async tags() {
     const genres = [
       { name: "Action", id: "39" },
