@@ -18,6 +18,15 @@
       "nsfw": false,
       "icon": "https://comix.to/favicon.ico",
       "entry": "comix.plugin.js"
+    },
+    {
+      "id": "weeb-central-V2",
+      "name": "Weeb Central V2",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": true,
+      "icon": "https://weebcentral.com/static/favicon.png",
+      "entry": "weebcentral.plugin.js"
     }
   ]
 }
