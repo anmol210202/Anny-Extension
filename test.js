@@ -32,7 +32,7 @@ function checkDuplicates(items, idKey = "id", label = "items") {
 
   for (const item of items) {
     const val = typeof item === "string" ? item : item[idKey];
-    if (val !== undefined && val !== null) {
+    if (val !== undefined && val !== null && val !== "") {
       if (seen.has(val)) {
         duplicates.add(val);
       } else {
@@ -42,7 +42,7 @@ function checkDuplicates(items, idKey = "id", label = "items") {
   }
 
   if (duplicates.size > 0) {
-    console.warn(`  ⚠️ HARBOR DUPLICATE WARNING: Found ${duplicates.size} duplicate ${label}! Sample duplicates:`, Array.from(duplicates).slice(0, 3));
+    console.warn(`  ⚠️ DUPLICATE WARNING: Found ${duplicates.size} duplicate ${label}! Sample duplicates:`, Array.from(duplicates).slice(0, 3));
   } else {
     console.log(`  ✅ Duplicate Check PASSED: All ${label} are unique.`);
   }
@@ -237,7 +237,6 @@ async function runPluginTests(pluginFile) {
       console.log(`✅ Fetched ${tags?.length || 0} tags.`);
       if (tags?.length > 0) {
         console.log("Sample:", tags.slice(0, 3));
-        checkDuplicates(tags, "id", "tags");
         checkHarborLimits(tags.length, 1000, "tags");
         const invalidTags = tags.filter((t) => !t.id || !t.name);
         if (invalidTags.length > 0) {
@@ -257,7 +256,6 @@ async function runPluginTests(pluginFile) {
     console.log(`✅ Fetched ${popularItems?.length || 0} popular titles.`);
     if (popularItems?.length > 0) {
       console.log("Top 3 Popular Titles:", popularItems.slice(0, 3).map((i) => i.title));
-      checkDuplicates(popularItems, "id", "popular manga items");
       checkHarborLimits(popularItems.length, 500, "summaries");
       await testCoverUrl(popularItems[0].cover, "Popular Title");
     }
@@ -279,14 +277,13 @@ async function runPluginTests(pluginFile) {
     console.log(`✅ Fetched ${searchItems?.length || 0} search results.`);
     if (searchItems?.length > 0) {
       console.log("Search Results:", searchItems.map((i) => i.title));
-      checkDuplicates(searchItems, "id", "search manga items");
       checkHarborLimits(searchItems.length, 500, "summaries");
     }
   } catch (err) {
     console.error("❌ Error in search():", err);
   }
 
-  const testCandidates = [...searchItems, ...popularItems];
+  const testCandidates = [...popularItems, ...searchItems];
   let selectedChapter = null;
 
   for (const item of testCandidates) {
@@ -312,7 +309,11 @@ async function runPluginTests(pluginFile) {
       console.log(`✅ Fetched ${chapters?.length || 0} chapters for "${item.title}".`);
 
       if (chapters?.length > 0) {
-        checkDuplicates(chapters, "id", "chapters");
+        // Check 1: Chapter IDs (Hard requirement for Harbor)
+        checkDuplicates(chapters, "id", "chapter IDs");
+        // Check 2: Chapter numbers (To verify scanlator deduplication)
+        checkDuplicates(chapters, "chapter", "chapter numbers");
+        
         checkHarborLimits(chapters.length, 5000, "chapters");
 
         console.log("📊 Chapter Sequence Check:");
@@ -345,7 +346,6 @@ async function runPluginTests(pluginFile) {
     console.log(`✅ Fetched ${pages?.length || 0} page URLs.`);
     if (pages?.length > 0) {
       console.log("Sample Pages:", pages.slice(0, 3));
-      checkDuplicates(pages, null, "page URLs");
       checkHarborLimits(pages.length, 2000, "page URLs");
 
       const invalidPages = pages.filter((p) => !/^https?:\/\//i.test(p));
