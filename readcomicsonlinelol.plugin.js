@@ -103,29 +103,46 @@ const plugin = {
   name: "ReadComicsOnline (.lol)",
 
   async popular(offset, tagId) {
-    const page = Math.floor(offset / 24) + 1;
-    let url = `${BASE}/`;
+    const pageIndex = Math.floor(offset / 24);
+    let url;
 
     if (tagId) {
-      if (["marvel", "dc", "image"].includes(tagId)) {
-        url = `${BASE}/publisher/${encodeURIComponent(tagId)}?page=${page}`;
-      } else {
-        url = `${BASE}/genre/${encodeURIComponent(tagId)}?page=${page}`;
-      }
+      const isPublisher = ["marvel", "dc", "image"].includes(tagId.toLowerCase());
+      const baseTagUrl = isPublisher
+        ? `${BASE}/publisher/${encodeURIComponent(tagId)}`
+        : `${BASE}/genre/${encodeURIComponent(tagId)}`;
+
+      url = pageIndex === 0 ? baseTagUrl : `${baseTagUrl}?page=${pageIndex + 1}`;
     } else {
-      if (offset === 0) {
-        url = `${BASE}/`;
+      // Dynamic catalog routing to paginate continuously across the entire library
+      const catalogRoutes = [
+        `${BASE}/`,                          // Page 0: Home Trending & Top comics
+        `${BASE}/publisher/marvel`,          // Page 1: Marvel Library
+        `${BASE}/publisher/dc`,              // Page 2: DC Comics Library
+        `${BASE}/publisher/image`,           // Page 3: Image Comics Library
+        `${BASE}/genre/superhero`,           // Page 4: Superhero
+        `${BASE}/genre/sci-fi`,              // Page 5: Sci-Fi
+        `${BASE}/genre/action`,              // Page 6: Action
+        `${BASE}/genre/horror`,              // Page 7: Horror
+        `${BASE}/genre/fantasy`,             // Page 8: Fantasy
+        `${BASE}/genre/crime`,               // Page 9: Crime
+        `${BASE}/genre/graphic-novels`,      // Page 10: Graphic Novels
+        `${BASE}/genre/adventure`,           // Page 11: Adventure
+        `${BASE}/genre/mature`,              // Page 12: Mature
+        `${BASE}/genre/mystery`,             // Page 13: Mystery
+        `${BASE}/genre/comedy`               // Page 14: Comedy
+      ];
+
+      if (pageIndex < catalogRoutes.length) {
+        url = catalogRoutes[pageIndex];
       } else {
-        url = `${BASE}/new-comics?page=${page}`;
+        const letters = "abcdefghijklmnopqrstuvwxyz";
+        const letterIndex = (pageIndex - catalogRoutes.length) % letters.length;
+        url = `${BASE}/search?q=${letters[letterIndex]}`;
       }
     }
 
-    let html = await requestHtml(url);
-
-    // Fallback if page > 1 on root endpoint
-    if (!html && offset > 0 && !tagId) {
-      html = await requestHtml(`${BASE}/?page=${page}`);
-    }
+    const html = await requestHtml(url);
     if (!html) return [];
 
     const doc = await harbor.parseHtml(html);
@@ -248,7 +265,6 @@ const plugin = {
       const cleanPath = href.replace(/^https?:\/\/[^\/]+/, "").replace(/^\/+|\/+$/g, "");
       const segments = cleanPath.split("/");
 
-      // Matches issue links: comic / SeriesSlug / IssueId
       if (segments.length === 3 && segments[0] === "comic" && segments[1].toLowerCase() === slug.toLowerCase()) {
         const issueId = segments[2];
         const fullId = `${slug}/${issueId}`;
@@ -293,7 +309,6 @@ const plugin = {
     const html = await requestHtml(`${BASE}/comic/${cleanPath}`);
     if (!html) return [];
 
-    // 1. Fast regex extraction of total pages
     let totalPages = null;
     const jsonLd = extractJsonLd(html, "ComicIssue");
     if (jsonLd && jsonLd.numberOfPages) {
@@ -310,7 +325,6 @@ const plugin = {
       }
     }
 
-    // 2. Fast regex pattern match for CDN path
     const imgMatch = html.match(/src="([^"]+\/pages\/[^\/]+\/[^\/]+\/(p?)(\d+)(\.[a-zA-Z0-9]+))"/);
 
     if (imgMatch && totalPages && totalPages > 0) {
@@ -328,7 +342,6 @@ const plugin = {
       return pages;
     }
 
-    // Fallback: DOM query if pattern did not match
     const doc = await harbor.parseHtml(html);
     const allImages = doc.querySelectorAll("img[src*='/pages/']");
     return Array.from(allImages)
