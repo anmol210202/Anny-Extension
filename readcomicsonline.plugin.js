@@ -33,26 +33,26 @@ async function requestHtml(url) {
   }
 }
 
-function parseMangaCard(element) {
-  if (!element) return null;
+function parseMangaCard(el) {
+  if (!el) return null;
 
-  const anchor =
-    element.querySelector("a[href*='/comic/']") ||
-    element.querySelector("a.line-clamp-2") ||
-    element.querySelector("a");
+  let href = el.attr("href");
+  let anchor = el;
+  if (!href || !href.includes("/comic/")) {
+    anchor = el.querySelector("a[href*='/comic/']") || el.querySelector("a");
+    href = anchor ? anchor.attr("href") : "";
+  }
+  if (!href) return null;
 
-  if (!anchor) return null;
-
-  const href = anchor.attr("href");
   const slug = cleanSlug(href);
   if (!slug || slug.includes("/auth/") || slug.includes("/news/")) return null;
 
-  const img = element.querySelector("img");
+  const img = el.querySelector("img");
   const cover = img ? img.attr("src") || img.attr("data-src") : undefined;
   const title =
     (img && img.attr("alt")) ||
-    (anchor.text() && anchor.text().trim()) ||
-    "Unknown";
+    (anchor && anchor.text() && anchor.text().trim()) ||
+    slug;
 
   return {
     id: slug,
@@ -74,23 +74,13 @@ const plugin = {
     }
 
     let html = await requestHtml(url);
-
-    // Fallback to home page if comic-list is empty on first page
     if (!html && offset === 0) {
       html = await requestHtml(`${BASE}/`);
     }
-
     if (!html) return [];
 
     const doc = harbor.parseHtml(html);
-
-    // Collect all card patterns present in the HTML (releases, hot items, and standard grid)
-    const cardNodes = [
-      ...doc.querySelectorAll(".reveal-card"),
-      ...doc.querySelectorAll(".release-card"),
-      ...doc.querySelectorAll(".hot-item"),
-      ...doc.querySelectorAll(".grid > .group")
-    ];
+    const cardNodes = doc.querySelectorAll("a[href*='/comic/']");
 
     const seenIds = new Set();
     const items = [];
@@ -123,12 +113,7 @@ const plugin = {
     if (!html) return [];
 
     const doc = harbor.parseHtml(html);
-    const cardNodes = [
-      ...doc.querySelectorAll(".reveal-card"),
-      ...doc.querySelectorAll(".release-card"),
-      ...doc.querySelectorAll(".grid > .group"),
-      ...doc.querySelectorAll(".comic-list-layout .group")
-    ];
+    const cardNodes = doc.querySelectorAll("a[href*='/comic/']");
 
     const seenIds = new Set();
     const items = [];
@@ -208,9 +193,7 @@ const plugin = {
     if (!html) return [];
 
     const doc = harbor.parseHtml(html);
-    const elements =
-      doc.querySelectorAll(".divide-y a") ||
-      doc.querySelectorAll("section a[href*='/comic/']");
+    const elements = doc.querySelectorAll("a[href*='/comic/']");
 
     const parsedChapters = [];
     const seenChapterIds = new Set();
@@ -249,7 +232,6 @@ const plugin = {
       });
     });
 
-    // Deduplicate by chapter number
     const chapterMap = new Map();
     for (const ch of parsedChapters) {
       if (!chapterMap.has(ch._num)) {
@@ -272,10 +254,7 @@ const plugin = {
 
     const doc = harbor.parseHtml(html);
 
-    // Extract all images directly from the '#reader-all' container
     let images = doc.querySelectorAll("#reader-all img");
-
-    // Fallback to single reader image if '#reader-all' is absent
     if (!images || images.length === 0) {
       images = doc.querySelectorAll("#reader-wrap img");
     }
@@ -286,28 +265,27 @@ const plugin = {
   },
 
   async tags() {
-    const publishersAndGenres = [
-      { id: "marvel-comics", name: "Marvel Comics" },
-      { id: "dc-comics", name: "DC Comics" },
-      { id: "image-comics", name: "Image Comics" },
-      { id: "dark-horse", name: "Dark Horse" },
-      { id: "idw", name: "IDW" },
-      { id: "boom-studios", name: "Boom Studios" },
-      { id: "dynamite", name: "Dynamite" },
-      { id: "oni-press", name: "Oni Press" },
-      { id: "mad-cave", name: "Mad Cave" },
-      { id: "action", name: "Action" },
-      { id: "adventure", name: "Adventure" },
-      { id: "funny", name: "Comedy" },
-      { id: "drama", name: "Drama" },
-      { id: "fantasy", name: "Fantasy" },
-      { id: "horror", name: "Horror" },
-      { id: "mystery", name: "Mystery" },
-      { id: "romance", name: "Romance" },
-      { id: "sci-fi", name: "Sci-Fi" },
-      { id: "superhero", name: "Superhero" },
-      { id: "thriller", name: "Thriller" }
+    return [
+      { id: "marvel-comics", name: "Marvel Comics", group: "Category" },
+      { id: "dc-comics", name: "DC Comics", group: "Category" },
+      { id: "image-comics", name: "Image Comics", group: "Category" },
+      { id: "dark-horse", name: "Dark Horse", group: "Category" },
+      { id: "idw", name: "IDW", group: "Category" },
+      { id: "boom-studios", name: "Boom Studios", group: "Category" },
+      { id: "dynamite", name: "Dynamite", group: "Category" },
+      { id: "oni-press", name: "Oni Press", group: "Category" },
+      { id: "mad-cave", name: "Mad Cave", group: "Category" },
+      { id: "action", name: "Action", group: "Category" },
+      { id: "adventure", name: "Adventure", group: "Category" },
+      { id: "funny", name: "Comedy", group: "Category" },
+      { id: "drama", name: "Drama", group: "Category" },
+      { id: "fantasy", name: "Fantasy", group: "Category" },
+      { id: "horror", name: "Horror", group: "Category" },
+      { id: "mystery", name: "Mystery", group: "Category" },
+      { id: "romance", name: "Romance", group: "Category" },
+      { id: "sci-fi", name: "Sci-Fi", group: "Category" },
+      { id: "superhero", name: "Superhero", group: "Category" },
+      { id: "thriller", name: "Thriller", group: "Category" }
     ];
-    return publishersAndGenres.map((g) => ({ id: g.id, name: g.name, group: "Category" }));
   }
 };

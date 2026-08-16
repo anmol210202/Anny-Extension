@@ -34,14 +34,15 @@ async function requestHtml(url) {
   }
 }
 
-function parseJsonLd(doc, expectedType) {
-  const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
-  for (const script of scripts) {
+// Extract JSON-LD directly from raw HTML string to prevent sanitization stripping
+function extractJsonLd(html, expectedType) {
+  if (!html) return null;
+  const regex = /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  while ((match = regex.exec(html)) !== null) {
     try {
-      const text = script.text();
-      if (!text) continue;
-      const data = JSON.parse(text);
-      if (data["@type"] === expectedType) {
+      const data = JSON.parse(match[1]);
+      if (data && data["@type"] === expectedType) {
         return data;
       }
     } catch (e) {}
@@ -49,35 +50,35 @@ function parseJsonLd(doc, expectedType) {
   return null;
 }
 
-function parseCardElement(element) {
-  if (!element) return null;
+function parseCardElement(el) {
+  if (!el) return null;
 
-  const anchor =
-    element.querySelector("a[href*='/comic/']") ||
-    element.querySelector("a[data-smartlink]") ||
-    element.querySelector("a");
+  let href = el.attr("href");
+  let anchor = el;
+  if (!href || !href.includes("/comic/")) {
+    anchor = el.querySelector("a[href*='/comic/']") || el.querySelector("a[data-smartlink]") || el.querySelector("a");
+    href = anchor ? anchor.attr("href") : "";
+  }
+  if (!href) return null;
 
-  if (!anchor) return null;
-
-  const href = anchor.attr("href") || "";
   const cleanPath = href.replace(/^https?:\/\/[^\/]+/, "").replace(/^\/+|\/+$/g, "");
   const segments = cleanPath.split("/");
 
-  // Only match series links (/comic/Slug), not issue links (/comic/Slug/Issue)
+  // Only match series links (/comic/Slug), ignore issue links (/comic/Slug/1)
   if (segments.length !== 2 || segments[0] !== "comic") {
     return null;
   }
 
   const slug = segments[1];
-  if (!slug || slug.includes("search") || slug.includes("genre")) return null;
+  if (!slug || slug.includes("search") || slug.includes("genre") || slug.includes("publisher")) return null;
 
-  const img = element.querySelector("img");
+  const img = el.querySelector("img");
   const cover = img ? img.attr("src") || img.attr("data-src") : undefined;
 
-  const titleEl = element.querySelector("h3") || element.querySelector("h2");
+  const titleEl = el.querySelector("h3") || el.querySelector("h2");
   const title =
     (titleEl ? titleEl.text().trim() : "") ||
-    anchor.attr("data-track-label") ||
+    (anchor ? anchor.attr("data-track-label") : "") ||
     (img ? img.attr("alt") : "") ||
     slug;
 
@@ -107,11 +108,7 @@ const plugin = {
     if (!html) return [];
 
     const doc = harbor.parseHtml(html);
-    const cardNodes = [
-      ...doc.querySelectorAll("div.grid a"),
-      ...doc.querySelectorAll("div.contents a"),
-      ...doc.querySelectorAll("div.overflow-x-auto a")
-    ];
+    const cardNodes = doc.querySelectorAll("a[href*='/comic/']");
 
     const seenIds = new Set();
     const items = [];
@@ -139,17 +136,15 @@ const plugin = {
       } else {
         url = `${BASE}/genre/${encodeURIComponent(tagId)}`;
       }
+    } else {
+      url = `${BASE}/new-comics`;
     }
 
     const html = await requestHtml(url);
     if (!html) return [];
 
     const doc = harbor.parseHtml(html);
-    const cardNodes = [
-      ...doc.querySelectorAll("div.grid a"),
-      ...doc.querySelectorAll("div.contents a"),
-      ...doc.querySelectorAll("div.overflow-x-auto a")
-    ];
+    const cardNodes = doc.querySelectorAll("a[href*='/comic/']");
 
     const seenIds = new Set();
     const items = [];
@@ -171,18 +166,24 @@ const plugin = {
     if (!html) return null;
 
     const doc = harbor.parseHtml(html);
-    const jsonLd = parseJsonLd(doc, "ComicSeries");
+    const jsonLd = extractJsonLd(html, "ComicSeries");
 
     let title = jsonLd?.name;
     let cover = jsonLd?.image;
     let description = jsonLd?.description;
     let author = "";
 
-    if (jsonLd?.author) {
-      author = typeof jsonLd.author === "object" ? jsonLd.author.name : jsonLd.author;
+    const rawAuthor = jsonLd?.author || jsonLd?.creator || jsonLd?.illustrator;
+    if (rawAuthor) {
+      if (Array.isArray(rawAuthor)) {
+        author = rawAuthor.map((a) => (typeof a === "object" ? a.name : a)).filter(Boolean).join(", ");
+      } else if (typeof rawAuthor === "object") {
+        author = rawAuthor.name;
+      } else {
+        author = String(rawAuthor);
+      }
     }
 
-    // Fallbacks from DOM
     if (!title) {
       const titleEl = doc.querySelector("h1.font-serif") || doc.querySelector("h1");
       title = titleEl ? titleEl.text().trim() : slug;
@@ -194,7 +195,7 @@ const plugin = {
     }
 
     if (!description) {
-      const descEl = doc.querySelector("p.font-sf-compact") || doc.querySelector("main p");
+      const descEl = doc.querySelector("p.font-sf-compact") || doc.querySelector("p");
       description = descEl ? descEl.text().trim() : undefined;
     }
 
@@ -206,7 +207,7 @@ const plugin = {
 
     return {
       id: slug,
-      title: title.trim(),
+      title: title ? title.trim() : slug,
       cover: abs(cover),
       description: description ? description.trim() : undefined,
       status,
@@ -230,7 +231,7 @@ const plugin = {
       const cleanPath = href.replace(/^https?:\/\/[^\/]+/, "").replace(/^\/+|\/+$/g, "");
       const segments = cleanPath.split("/");
 
-      // Match issue link: comic / SeriesSlug / IssueNumber
+      // Matches issue links: comic / SeriesSlug / IssueId
       if (segments.length === 3 && segments[0] === "comic" && segments[1].toLowerCase() === slug.toLowerCase()) {
         const issueId = segments[2];
         const fullId = `${slug}/${issueId}`;
@@ -238,12 +239,12 @@ const plugin = {
         if (seenIds.has(fullId)) continue;
         seenIds.add(fullId);
 
-        const titleText = a.text().trim();
-        const numMatch = (titleText || issueId).match(/#?(\d+(?:\.\d+)?)/);
+        // Derive issue number purely from issueId slug to avoid date concatenation glitches
+        const numMatch = issueId.match(/(\d+(?:\.\d+)?)/);
         const numStr = numMatch ? numMatch[1] : issueId;
 
-        // Try extracting release date (format: YYYY-MM-DD)
-        const dateMatch = a.text().match(/\d{4}-\d{2}-\d{2}/);
+        const textContent = a.text().trim();
+        const dateMatch = textContent.match(/\d{4}-\d{2}-\d{2}/);
         const publishAt = dateMatch ? new Date(dateMatch[0]).toISOString() : undefined;
 
         parsedChapters.push({
@@ -277,41 +278,39 @@ const plugin = {
     const html = await requestHtml(`${BASE}/comic/${cleanPath}`);
     if (!html) return [];
 
-    const doc = harbor.parseHtml(html);
-    const jsonLd = parseJsonLd(doc, "ComicIssue");
-
+    const jsonLd = extractJsonLd(html, "ComicIssue");
     let totalPages = jsonLd?.numberOfPages;
 
-    // Fallback: extract total pages from page indicator text (e.g., "1 / 27")
+    // Fallbacks for total pages from HTML
     if (!totalPages) {
-      const pageTextMatch = html.match(/\b\d+\s*\/\s*(\d+)\b/);
-      if (pageTextMatch) {
-        totalPages = parseInt(pageTextMatch[1], 10);
+      const maxMatch =
+        html.match(/aria-valuemax="(\d+)"/) ||
+        html.match(/Page\s+\d+\s*\/\s*(\d+)/i) ||
+        html.match(/"numberOfPages"\s*:\s*(\d+)/);
+      if (maxMatch) {
+        totalPages = parseInt(maxMatch[1], 10);
       }
     }
 
-    // Find the first page URL
-    const imgEl = doc.querySelector("img[src*='/pages/']");
-    const firstImgSrc = imgEl ? imgEl.attr("src") : undefined;
+    // Extract first page URL pattern
+    const imgMatch = html.match(/src="([^"]+\/pages\/[^\/]+\/[^\/]+\/(p?)(\d+)(\.[a-zA-Z0-9]+))"/);
 
-    if (firstImgSrc && totalPages && totalPages > 0) {
-      // Matches pattern: .../pages/Series/Issue/p001.webp or 001.webp
-      const patternMatch = firstImgSrc.match(/^(https?:\/\/.*\/pages\/[^\/]+\/[^\/]+\/)(p?)(\d+)(\.[a-zA-Z0-9]+)/);
-      if (patternMatch) {
-        const prefixUrl = patternMatch[1];
-        const pChar = patternMatch[2] || "p";
-        const ext = patternMatch[4] || ".webp";
+    if (imgMatch && totalPages && totalPages > 0) {
+      const fullUrl = imgMatch[1];
+      const pChar = imgMatch[2] || "p";
+      const padLength = imgMatch[3].length;
+      const ext = imgMatch[4] || ".webp";
+      const prefixUrl = fullUrl.substring(0, fullUrl.lastIndexOf("/") + 1);
 
-        const pages = [];
-        for (let i = 1; i <= totalPages; i++) {
-          const paddedIndex = String(i).padStart(3, "0");
-          pages.push(`${prefixUrl}${pChar}${paddedIndex}${ext}`);
-        }
-        return pages;
+      const pages = [];
+      for (let i = 1; i <= totalPages; i++) {
+        const paddedIndex = String(i).padStart(padLength, "0");
+        pages.push(`${prefixUrl}${pChar}${paddedIndex}${ext}`);
       }
+      return pages;
     }
 
-    // Fallback: return any reader images found directly in the DOM
+    const doc = harbor.parseHtml(html);
     const allImages = doc.querySelectorAll("img[src*='/pages/']");
     return Array.from(allImages)
       .map((img) => abs(img.attr("src")))
@@ -319,7 +318,7 @@ const plugin = {
   },
 
   async tags() {
-    const tags = [
+    return [
       { id: "marvel", name: "Marvel", group: "Publisher" },
       { id: "dc", name: "DC Comics", group: "Publisher" },
       { id: "image", name: "Image Comics", group: "Publisher" },
@@ -337,6 +336,5 @@ const plugin = {
       { id: "sci-fi", name: "Sci-Fi", group: "Genre" },
       { id: "superhero", name: "Superhero", group: "Genre" }
     ];
-    return tags;
   }
 };
