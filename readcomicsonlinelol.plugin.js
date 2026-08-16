@@ -64,7 +64,6 @@ function parseCardElement(el) {
   const cleanPath = href.replace(/^https?:\/\/[^\/]+/, "").replace(/^\/+|\/+$/g, "");
   const segments = cleanPath.split("/");
 
-  // Only match series links (/comic/Slug), ignore issue links (/comic/Slug/1)
   if (segments.length !== 2 || segments[0] !== "comic") {
     return null;
   }
@@ -107,7 +106,7 @@ const plugin = {
     const html = await requestHtml(url);
     if (!html) return [];
 
-    const doc = harbor.parseHtml(html);
+    const doc = await harbor.parseHtml(html);
     const cardNodes = doc.querySelectorAll("a[href*='/comic/']");
 
     const seenIds = new Set();
@@ -143,7 +142,7 @@ const plugin = {
     const html = await requestHtml(url);
     if (!html) return [];
 
-    const doc = harbor.parseHtml(html);
+    const doc = await harbor.parseHtml(html);
     const cardNodes = doc.querySelectorAll("a[href*='/comic/']");
 
     const seenIds = new Set();
@@ -165,7 +164,7 @@ const plugin = {
     const html = await requestHtml(`${BASE}/comic/${slug}`);
     if (!html) return null;
 
-    const doc = harbor.parseHtml(html);
+    const doc = await harbor.parseHtml(html);
     const jsonLd = extractJsonLd(html, "ComicSeries");
 
     let title = jsonLd?.name;
@@ -220,7 +219,7 @@ const plugin = {
     const html = await requestHtml(`${BASE}/comic/${slug}`);
     if (!html) return [];
 
-    const doc = harbor.parseHtml(html);
+    const doc = await harbor.parseHtml(html);
     const links = doc.querySelectorAll("a[href*='/comic/']");
 
     const parsedChapters = [];
@@ -231,7 +230,6 @@ const plugin = {
       const cleanPath = href.replace(/^https?:\/\/[^\/]+/, "").replace(/^\/+|\/+$/g, "");
       const segments = cleanPath.split("/");
 
-      // Matches issue links: comic / SeriesSlug / IssueId
       if (segments.length === 3 && segments[0] === "comic" && segments[1].toLowerCase() === slug.toLowerCase()) {
         const issueId = segments[2];
         const fullId = `${slug}/${issueId}`;
@@ -239,7 +237,6 @@ const plugin = {
         if (seenIds.has(fullId)) continue;
         seenIds.add(fullId);
 
-        // Derive issue number purely from issueId slug to avoid date concatenation glitches
         const numMatch = issueId.match(/(\d+(?:\.\d+)?)/);
         const numStr = numMatch ? numMatch[1] : issueId;
 
@@ -259,7 +256,6 @@ const plugin = {
       }
     }
 
-    // Deduplicate by chapter number
     const chapterMap = new Map();
     for (const ch of parsedChapters) {
       if (!chapterMap.has(ch._num)) {
@@ -281,7 +277,6 @@ const plugin = {
     const jsonLd = extractJsonLd(html, "ComicIssue");
     let totalPages = jsonLd?.numberOfPages;
 
-    // Fallbacks for total pages from HTML
     if (!totalPages) {
       const maxMatch =
         html.match(/aria-valuemax="(\d+)"/) ||
@@ -292,7 +287,6 @@ const plugin = {
       }
     }
 
-    // Extract first page URL pattern
     const imgMatch = html.match(/src="([^"]+\/pages\/[^\/]+\/[^\/]+\/(p?)(\d+)(\.[a-zA-Z0-9]+))"/);
 
     if (imgMatch && totalPages && totalPages > 0) {
@@ -310,7 +304,7 @@ const plugin = {
       return pages;
     }
 
-    const doc = harbor.parseHtml(html);
+    const doc = await harbor.parseHtml(html);
     const allImages = doc.querySelectorAll("img[src*='/pages/']");
     return Array.from(allImages)
       .map((img) => abs(img.attr("src")))
@@ -338,3 +332,5 @@ const plugin = {
     ];
   }
 };
+
+harbor.register(plugin);
