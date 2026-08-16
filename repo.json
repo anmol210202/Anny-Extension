@@ -79,7 +79,7 @@
       "version": "1.0.0",
       "lang": "en",
       "nsfw": false,
-      "icon": "https://readcomicsonline.ru/favicon.ico",
+      "icon": "https://readcomicsonline.ru/images/banner.jpg",
       "entry": "readcomicsonline.plugin.js"
     }
   ]
