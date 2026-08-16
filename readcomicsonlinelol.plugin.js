@@ -18,6 +18,7 @@ function cleanSlug(urlOrPath) {
   return p.replace(/^\/+|\/+$/g, "");
 }
 
+// Optimized HTTP fetcher
 async function requestHtml(url) {
   try {
     const res = await harbor.http(url, {
@@ -34,7 +35,7 @@ async function requestHtml(url) {
   }
 }
 
-// Extract JSON-LD directly from raw HTML string to prevent sanitization stripping
+// Fast JSON-LD extractor without DOM overhead
 function extractJsonLd(html, expectedType) {
   if (!html) return null;
   const regex = /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
@@ -64,6 +65,7 @@ function parseCardElement(el) {
   const cleanPath = href.replace(/^https?:\/\/[^\/]+/, "").replace(/^\/+|\/+$/g, "");
   const segments = cleanPath.split("/");
 
+  // Only match series links (/comic/Slug), ignore issue reader links (/comic/Slug/1)
   if (segments.length !== 2 || segments[0] !== "comic") {
     return null;
   }
@@ -72,7 +74,14 @@ function parseCardElement(el) {
   if (!slug || slug.includes("search") || slug.includes("genre") || slug.includes("publisher")) return null;
 
   const img = el.querySelector("img");
-  const cover = img ? img.attr("src") || img.attr("data-src") : undefined;
+  let cover = img ? img.attr("src") || img.attr("data-src") : undefined;
+
+  // Use fast thumbnail endpoint for browse/popular grids
+  if (cover && cover.includes("/covers/")) {
+    cover = cover.replace("/covers/", "/covers-sm/");
+  } else if (!cover) {
+    cover = `https://cdn.readcomicsonline.lol/covers-sm/${slug}/1.webp`;
+  }
 
   const titleEl = el.querySelector("h3") || el.querySelector("h2");
   const title =
@@ -168,7 +177,8 @@ const plugin = {
     const jsonLd = extractJsonLd(html, "ComicSeries");
 
     let title = jsonLd?.name;
-    let cover = jsonLd?.image;
+    // Prefer full high-res cover for the detail screen
+    let cover = jsonLd?.image || `https://cdn.readcomicsonline.lol/covers/${slug}/1.webp`;
     let description = jsonLd?.description;
     let author = "";
 
@@ -186,11 +196,6 @@ const plugin = {
     if (!title) {
       const titleEl = doc.querySelector("h1.font-serif") || doc.querySelector("h1");
       title = titleEl ? titleEl.text().trim() : slug;
-    }
-
-    if (!cover) {
-      const imgEl = doc.querySelector("img[alt*='comic cover']") || doc.querySelector("img");
-      cover = imgEl ? imgEl.attr("src") : undefined;
     }
 
     if (!description) {
@@ -274,8 +279,12 @@ const plugin = {
     const html = await requestHtml(`${BASE}/comic/${cleanPath}`);
     if (!html) return [];
 
+    // 1. Fast regex extraction of total pages (avoids slow DOM queries)
+    let totalPages = null;
     const jsonLd = extractJsonLd(html, "ComicIssue");
-    let totalPages = jsonLd?.numberOfPages;
+    if (jsonLd && jsonLd.numberOfPages) {
+      totalPages = parseInt(jsonLd.numberOfPages, 10);
+    }
 
     if (!totalPages) {
       const maxMatch =
@@ -287,6 +296,7 @@ const plugin = {
       }
     }
 
+    // 2. Fast regex pattern match for the WebP page CDN path
     const imgMatch = html.match(/src="([^"]+\/pages\/[^\/]+\/[^\/]+\/(p?)(\d+)(\.[a-zA-Z0-9]+))"/);
 
     if (imgMatch && totalPages && totalPages > 0) {
@@ -296,14 +306,15 @@ const plugin = {
       const ext = imgMatch[4] || ".webp";
       const prefixUrl = fullUrl.substring(0, fullUrl.lastIndexOf("/") + 1);
 
-      const pages = [];
+      const pages = new Array(totalPages);
       for (let i = 1; i <= totalPages; i++) {
         const paddedIndex = String(i).padStart(padLength, "0");
-        pages.push(`${prefixUrl}${pChar}${paddedIndex}${ext}`);
+        pages[i - 1] = `${prefixUrl}${pChar}${paddedIndex}${ext}`;
       }
       return pages;
     }
 
+    // Fallback: DOM query if regex pattern didn't match
     const doc = await harbor.parseHtml(html);
     const allImages = doc.querySelectorAll("img[src*='/pages/']");
     return Array.from(allImages)
