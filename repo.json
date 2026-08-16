@@ -81,6 +81,15 @@
       "nsfw": false,
       "icon": "https://readcomicsonline.ru/images/banner.jpg",
       "entry": "readcomicsonline.plugin.js"
+    },
+    {
+      "id": "readcomicsonlinelol",
+      "name": "ReadComicsOnline (.lol)",
+      "version": "1.0.0",
+      "lang": "en",
+      "nsfw": false,
+      "icon": "https://readcomicsonline.lol/favicon.ico",
+      "entry": "readcomicsonlinelol.plugin.js"
     }
   ]
 }
